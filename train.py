@@ -3,10 +3,10 @@ import random
 import pickle
 import time
 import numpy as np
-from collect import Game
+from game import Game
 from collections import deque
 from net import PolicyValueNet
-from tools import zip_array
+from tools import recovery_state_mcts_prob
 from parameters import (
     PLAYOUT,
     C_PUCT,
@@ -36,27 +36,29 @@ class TrainPipeline:
         self.kl_targ = KL_TARG  # kl散度控制
         self.check_freq = 100  # 保存模型的频率
         self.game_batch_num = GAME_BATCH_NUM  # 每次训练的游戏数量
-        self.best_win_ratio = 0.0
+        # self.best_win_ratio = 0.0
         # self.pure_mcts_playout_num = 500
         self.buffer_size = BUFFER_SIZE  # 经验池大小
         self.data_buffer = deque(maxlen=self.buffer_size)
         if init_model:
             try:
                 self.policy_value_net = PolicyValueNet(model_file=init_model)
-                print("已加载上次最终模型")
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已加载上次最终模型")
             except:
                 # 从零开始训练
-                print("模型路径不存在，从零开始训练")
+                print(
+                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 模型路径不存在，从零开始训练"
+                )
                 self.policy_value_net = PolicyValueNet()
         else:
-            print("从零开始训练")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 从零开始训练")
             self.policy_value_net = PolicyValueNet()
 
-    def policy_updata(self):
+    def policy_update(self):
         """更新策略价值网络"""
         mini_batch = random.sample(self.data_buffer, self.batch_size)
         # print(mini_batch[0][1],mini_batch[1][1])
-        mini_batch = [zip_array.recovery_state_mcts_prob(data) for data in mini_batch]
+        mini_batch = [recovery_state_mcts_prob(data) for data in mini_batch]
         state_batch = [data[0] for data in mini_batch]
         state_batch = np.array(state_batch).astype("float32")
 
@@ -74,7 +76,7 @@ class TrainPipeline:
                 state_batch,
                 mcts_probs_batch,
                 winner_batch,
-                self.learn_rate * self.lr_multiplier,
+                self.learning_rate * self.lr_multiplier,
             )
             # 新的策略，新的价值函数
             new_probs, new_v = self.policy_value_net.policy_value(state_batch)
@@ -103,19 +105,12 @@ class TrainPipeline:
 
         print(
             (
-                "kl:{:.5f},"
-                "lr_multiplier:{:.3f},"
-                "loss:{},"
-                "entropy:{},"
-                "explained_var_old:{:.9f},"
-                "explained_var_new:{:.9f}"
-            ).format(
-                kl,
-                self.lr_multiplier,
-                loss,
-                entropy,
-                explained_var_old,
-                explained_var_new,
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] kl:{kl:.5f},"
+                f"lr_multiplier:{self.lr_multiplier:.3f},"
+                f"loss:{loss:.3f},"
+                f"entropy:{entropy:.3f},"
+                f"explained_var_old:{explained_var_old:.9f},"
+                f"explained_var_new:{explained_var_new:.9f}"
             )
         )
         return loss, entropy
@@ -131,14 +126,14 @@ class TrainPipeline:
                             self.data_buffer = data_file["data_buffer"]
                             self.iters = data_file["iters"]
                             del data_file
-                        print("已载入数据")
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已载入数据")
                         break
                     except:
                         time.sleep(30)
 
                 print("step i {}: ".format(self.iters))
                 if len(self.data_buffer) > self.batch_size:
-                    loss, entropy = self.policy_updata()
+                    loss, entropy = self.policy_update()
                     # 保存模型
                     self.policy_value_net.save_model(MODEL_PATH)
 
@@ -149,7 +144,7 @@ class TrainPipeline:
                     # print("current self-play batch: {},win_ratio: {}".format(i + 1, win_ratio))
                     # self.policy_value_net.save_model('./current_policy.model')
                     # if win_ratio > self.best_win_ratio:
-                    #     print("New best policy!!!!!!!!")
+                    #     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] New best policy!!!!!!!!")
                     #     self.best_win_ratio = win_ratio
                     #     # update the best_policy
                     #     self.policy_value_net.save_model('./best_policy.model')
@@ -157,13 +152,16 @@ class TrainPipeline:
                     #             self.pure_mcts_playout_num < 5000):
                     #         self.pure_mcts_playout_num += 1000
                     #         self.best_win_ratio = 0.0
-                    print("current self-play batch: {}".format(i + 1))
+                    print(
+                        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] current self-play batch: {i + 1}"
+                    )
                     self.policy_value_net.save_model(
-                        "models/current_policy_batch{}.model".format(i + 1)
+                        "models/current_policy_batch{}.pkl".format(i + 1)
                     )
         except KeyboardInterrupt:
-            print("\n\rquit")
+            print(f"\n\r[{time.strftime('%Y-%m-%d %H:%M:%S')}] quit")
 
 
-training_pipeline = TrainPipeline(init_model="current_policy.pkl")
-training_pipeline.run()
+if __name__ == "__main__":
+    training_pipeline = TrainPipeline(init_model="current_policy.pkl")
+    training_pipeline.run()

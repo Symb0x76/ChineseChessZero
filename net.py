@@ -115,6 +115,10 @@ class PolicyValueNet(object):
             eps=1e-8,
             weight_decay=self.l2_const,
         )
+        # 创建CUDA流用于异步操作
+        self.stream = (
+            torch.cuda.Stream() if self.use_gpu and torch.cuda.is_available() else None
+        )
         if model_file:
             self.policy_value_net.load_state_dict(
                 torch.load(model_file)
@@ -141,14 +145,25 @@ class PolicyValueNet(object):
         current_state = np.ascontiguousarray(
             current_state.reshape(-1, 15, 10, 9)
         ).astype("float16")
-        current_state = torch.as_tensor(current_state).to(self.device)
-        # 使用神经网络进行预测
-        with autocast(str(DEVICE)):  # 半精度fp16
-            log_act_probs, value = self.policy_value_net(current_state)
-        log_act_probs, value = log_act_probs.cpu(), value.cpu()
-        global act_probs
-        act_probs = np.exp(log_act_probs.detach().numpy().astype("float16").flatten())
+        if self.stream is not None:
+            with torch.cuda.stream(self.stream):
+                current_state = torch.as_tensor(current_state).to(
+                    self.device, non_blocking=True
+                )
+                # 使用神经网络进行预测
+                with autocast(str(DEVICE)):  # 半精度fp16
+                    log_act_probs, value = self.policy_value_net(current_state)
+                log_act_probs, value = log_act_probs.to(
+                    "cpu", non_blocking=True
+                ), value.to("cpu", non_blocking=True)
+            torch.cuda.current_stream().wait_stream(self.stream)
+        else:
+            current_state = torch.as_tensor(current_state).to(self.device)
+            with autocast(str(DEVICE)):  # 半精度fp16
+                log_act_probs, value = self.policy_value_net(current_state)
+            log_act_probs, value = log_act_probs.cpu(), value.cpu()
         # 只取出合法动作
+        act_probs = np.exp(log_act_probs.detach().numpy().astype("float16").flatten())
         act_probs = zip(legal_positions, act_probs[legal_positions])
         # 返回动作概率，以及状态价值
         return act_probs, value.detach().numpy()
