@@ -19,11 +19,11 @@ MODEL_PATH = "current_policy.pkl"
 # 训练数据容器地址
 DATA_BUFFER_PATH = "data_buffer.pkl"
 # 训练数据批次大小
-BATCH_SIZE = 512
+BATCH_SIZE = 1024
 # 训练轮数
-EPOCHS = 5
+EPOCHS = 10
 # 训练更新间隔时间
-UPDATE_INTERVAL = 600
+UPDATE_INTERVAL = 3
 # kl散度控制
 KL_TARG = 0.02
 # 训练更新的次数

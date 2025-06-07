@@ -1,4 +1,5 @@
 import cchess
+import cchess.svg
 import time
 import numpy as np
 from IPython.display import display, SVG
@@ -16,23 +17,43 @@ class Game(object):
 
     # 可视化棋盘
     def graphic(self, board):
-        print(
+        """print(
             f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] player1 take: ",
             "RED" if cchess.RED else "BLACK",
         )
         print(
             f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] player0 take: ",
             "BLACK" if cchess.RED else "RED",
-        )
+        )"""
         svg = cchess.svg.board(
             board,
-            size=450,
+            size=500,
             coordinates=True,
-            axes_type=1,
+            axes_type=0,
             checkers=board.checkers(),
+            lastmove=board.peek() if board.peek() else None,
             orientation=cchess.RED,
         )
-        display(SVG(svg))
+        # 获取当前玩家
+
+        current_player = "红方" if board.turn == cchess.RED else "黑方"
+        status_text = f"当前走子: {current_player} - 步数: {len(board.move_stack)}"
+
+        # 尝试在窗口中显示
+        try:
+            from tools import get_chess_window
+
+            window = get_chess_window()
+            if window:
+                window.update_board(svg, status_text)
+                # 给窗口一点时间更新
+                time.sleep(0.1)
+            else:
+                # 如果窗口创建失败，回退到终端显示
+                display(SVG(svg))
+        except ImportError:
+            # 如果无法导入窗口函数，回退到终端显示
+            display(SVG(svg))
 
     # 用于人机对战，人人对战等
     def start_play(self, player1, player0, is_shown=True):

@@ -3,6 +3,7 @@ import cchess
 import time
 import os
 import copy
+import argparse
 from collections import deque
 from net import PolicyValueNet
 from mcts import MCTS_AI
@@ -67,12 +68,12 @@ class CollectPipeline:
             )
         return mirror_data
 
-    def collect_data(self, n_games=1):
+    def collect_data(self, n_games=1, is_shown=False):
         """收集自我对弈的数据"""
         for i in range(n_games):
             self.load_model()  # 从本体处加载最新模型
             winner, play_data = self.game.start_self_play(
-                self.mcts_ai, is_shown=False
+                self.mcts_ai, is_shown=is_shown
             )  # 开始自我对弈
             play_data = list(play_data)  # 转换为列表
             self.episode_len = len(play_data)  # 记录每盘对局长度
@@ -101,11 +102,11 @@ class CollectPipeline:
                 pickle.dump(data_dict, data_file)
         return self.iters
 
-    def run(self):
+    def run(self, is_shown=False):
         """开始收集数据"""
         try:
             while True:
-                iters = self.collect_data()
+                iters = self.collect_data(is_shown=is_shown)
                 print(
                     f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] batch i: {iters}, episode_len: {self.episode_len}"
                 )
@@ -114,6 +115,12 @@ class CollectPipeline:
 
 
 if __name__ == "__main__":
+    # 添加命令行参数解析
+    parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
+    parser.add_argument(
+        "--show", action="store_true", default=False, help="是否显示棋盘对弈过程"
+    )
+    args = parser.parse_args()
     # 创建数据收集管道实例
     collecting_pipeline = CollectPipeline(init_model="current_policy.pkl")
-    collecting_pipeline.run()
+    collecting_pipeline.run(is_shown=args.show)

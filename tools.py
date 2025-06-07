@@ -281,3 +281,100 @@ def get_all_legal_moves():
 
 
 move_id2move_action, move_action2move_id = get_all_legal_moves()
+
+
+def create_window_visualization():
+    """创建基于Web浏览器的棋盘可视化，零依赖方案"""
+    try:
+        import webbrowser
+        import os
+        import tempfile
+        import threading
+        import time
+
+        class BrowserWindow:
+            def __init__(self):
+                self.temp_dir = tempfile.mkdtemp(prefix="chess_viz_")
+                self.html_path = os.path.join(self.temp_dir, "chess.html")
+                self.current_svg = ""
+                self.status_text = ""
+                self.browser_opened = False
+
+                # 创建初始HTML文件
+                self._create_html()
+
+                # 启动自动刷新线程
+                self.running = True
+                self.update_thread = threading.Thread(target=self._auto_update)
+                self.update_thread.daemon = True
+                self.update_thread.start()
+
+            def _create_html(self):
+                """创建自动刷新的HTML页面"""
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Chinese Chess</title>
+                    <meta http-equiv="refresh" content="1">
+                    <style>
+                        body {{ display: flex; flex-direction: column; align-items: center;
+                                font-family: Arial, sans-serif; background-color: #f5f5f5; }}
+                        .board {{ margin: 20px; }}
+                        .status {{ font-weight: bold; font-size: 16px; margin: 10px; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="board">{self.current_svg}</div>
+                    <div class="status">{self.status_text}</div>
+                </body>
+                </html>
+                """
+                with open(self.html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+
+            def _auto_update(self):
+                """定期更新HTML文件"""
+                last_svg = ""
+                last_status = ""
+
+                while self.running:
+                    if self.current_svg != last_svg or self.status_text != last_status:
+                        self._create_html()
+                        last_svg = self.current_svg
+                        last_status = self.status_text
+                    time.sleep(0.5)
+
+            def update_board(self, svg_content, status_text=""):
+                self.current_svg = svg_content
+                self.status_text = status_text
+
+                if not self.browser_opened:
+                    webbrowser.open(f"file://{self.html_path}")
+                    self.browser_opened = True
+
+        # 单例模式
+        window_instance = None
+
+        def get_window():
+            nonlocal window_instance
+
+            if window_instance is None:
+                window_instance = BrowserWindow()
+
+            return window_instance
+
+        return get_window
+
+    except ImportError as e:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 错误: {e}")
+
+        # 回退方案
+        def dummy_window():
+            return None
+
+        return dummy_window
+
+
+# 创建全局窗口获取函数
+get_chess_window = create_window_visualization()

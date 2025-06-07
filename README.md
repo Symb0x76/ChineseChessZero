@@ -10,6 +10,7 @@
 -   [ ] 实现网页 GUI
 -   [ ] 优化参数
 -   [ ] 解决 collect.py 多开显卡占用率不高的问题
+-   [ ] 使用 DataLoaders 优化数据加载
 
 ## 使用方法
 
@@ -37,6 +38,8 @@ python collect.py
 如果配置比较好可以选择使用解除 gil 锁的 python3.13t 并发运行
 
 但是当前 collect.py 多开会导致 gpu 占用率降到 50%，需要至少 8 并行才能实现正提升
+
+可以运行`python collect.py --show`来可视化对弈过程
 
 6.  运行 train.py
 

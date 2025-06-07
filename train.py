@@ -7,6 +7,7 @@ from game import Game
 from collections import deque
 from net import PolicyValueNet
 from tools import recovery_state_mcts_prob
+from torch.utils.data import DataLoader, Dataset
 from parameters import (
     PLAYOUT,
     C_PUCT,
@@ -126,18 +127,20 @@ class TrainPipeline:
                             self.data_buffer = data_file["data_buffer"]
                             self.iters = data_file["iters"]
                             del data_file
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已载入数据")
+                        print(
+                            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已载入数据，缓冲区大小: {len(self.data_buffer)}, batch_size: {self.batch_size}"
+                        )
                         break
                     except:
-                        time.sleep(30)
+                        time.sleep(10)
 
-                print("step i {}: ".format(self.iters))
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] step i {self.iters}: ")
                 if len(self.data_buffer) > self.batch_size:
                     loss, entropy = self.policy_update()
                     # 保存模型
                     self.policy_value_net.save_model(MODEL_PATH)
 
-                time.sleep(UPDATE_INTERVAL)  # 每10分钟更新一次模型
+                time.sleep(UPDATE_INTERVAL)  # 每10s更新一次模型
 
                 if (i + 1) % self.check_freq == 0:
                     # win_ratio = self.policy_evaluate()
