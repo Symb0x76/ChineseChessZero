@@ -1,4 +1,10 @@
 import cchess
+import threading
+import time
+import webbrowser
+import json
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 
 def decode_board(board):
@@ -283,90 +289,255 @@ def get_all_legal_moves():
 move_id2move_action, move_action2move_id = get_all_legal_moves()
 
 
-def create_window_visualization():
-    """创建基于Web浏览器的棋盘可视化，零依赖方案"""
+def create_window_visualization(host="0.0.0.0", port=8000):
+    """创建基于纯HTTP的棋盘可视化服务器，避免使用WebSocket"""
     try:
-        import webbrowser
-        import os
-        import tempfile
-        import threading
-        import time
+        # 存储当前棋盘状态的全局变量
+        current_svg = ""
+        status_text = ""
+        last_update_time = time.time()
 
-        class BrowserWindow:
-            def __init__(self):
-                self.temp_dir = tempfile.mkdtemp(prefix="chess_viz_")
-                self.html_path = os.path.join(self.temp_dir, "chess.html")
-                self.current_svg = ""
-                self.status_text = ""
-                self.browser_opened = False
+        # 线程化HTTP服务器，支持并发连接
+        class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+            """处理请求的线程化版本"""
 
-                # 创建初始HTML文件
-                self._create_html()
+            daemon_threads = True
 
-                # 启动自动刷新线程
-                self.running = True
-                self.update_thread = threading.Thread(target=self._auto_update)
-                self.update_thread.daemon = True
-                self.update_thread.start()
+        class ChessHTTPHandler(SimpleHTTPRequestHandler):
+            """处理棋盘HTTP请求的处理程序"""
 
-            def _create_html(self):
-                """创建自动刷新的HTML页面"""
+            def do_GET(self):
+                """处理GET请求"""
+                # 根据路径提供不同的响应
+                if self.path == "/" or self.path == "/index.html":
+                    # 主页，提供棋盘界面
+                    self.send_html_response()
+                elif self.path == "/board":
+                    # 棋盘数据API，提供JSON格式的当前棋盘状态
+                    self.send_board_data()
+                elif self.path.startswith("/poll"):
+                    # 轮询端点，使用长轮询或条件请求减少刷新频率
+                    self.handle_polling()
+                else:
+                    # 404 - 找不到请求的资源
+                    self.send_error(404, "Resource not found")
+
+            def send_html_response(self):
+                """发送主HTML页面"""
                 html_content = f"""
                 <!DOCTYPE html>
                 <html>
                 <head>
+                    <meta charset="UTF-8">
                     <title>Chinese Chess</title>
-                    <meta http-equiv="refresh" content="1">
                     <style>
-                        body {{ display: flex; flex-direction: column; align-items: center;
-                                font-family: Arial, sans-serif; background-color: #f5f5f5; }}
-                        .board {{ margin: 20px; }}
-                        .status {{ font-weight: bold; font-size: 16px; margin: 10px; }}
+                        body {{ 
+                            display: flex; 
+                            flex-direction: column; 
+                            align-items: center;
+                            font-family: Arial, sans-serif; 
+                            background-color: #f5f5f5; 
+                        }}
+                        .board-container {{ 
+                            margin: 20px;
+                            background-color: #f2d16b;
+                            border: 2px solid #8b4513;
+                            padding: 10px;
+                            border-radius: 8px;
+                            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+                        }}
+                        .board {{ 
+                            width: 500px;
+                            height: 550px;
+                            margin: 10px;
+                        }}
+                        .status {{ 
+                            font-weight: bold; 
+                            font-size: 16px; 
+                            margin: 10px;
+                            text-align: center;
+                        }}
                     </style>
+                    <script>
+                        // 轮询间隔（毫秒）
+                        const POLL_INTERVAL = 1000;
+                        // 上次更新时间
+                        let lastUpdateTime = 0;
+
+                        // 获取棋盘更新
+                        function pollBoardUpdates() {{
+                            fetch('/poll?since=' + lastUpdateTime)
+                                .then(response => response.json())
+                                .then(data => {{
+                                    if (data.updated) {{
+                                        // 棋盘有更新，更新界面
+                                        document.getElementById('board').innerHTML = data.svg;
+                                        document.getElementById('status').innerText = data.status;
+                                        lastUpdateTime = data.timestamp;
+                                    }}
+                                    // 继续轮询
+                                    setTimeout(pollBoardUpdates, POLL_INTERVAL);
+                                }})
+                                .catch(error => {{
+                                    console.error('轮询出错:', error);
+                                    // 发生错误时，延迟后重试
+                                    setTimeout(pollBoardUpdates, POLL_INTERVAL * 2);
+                                }});
+                        }}
+
+                        // 页面加载时启动轮询
+                        window.addEventListener('load', () => {{
+                            // 立即获取初始棋盘状态
+                            fetch('/board')
+                                .then(response => response.json())
+                                .then(data => {{
+                                    document.getElementById('board').innerHTML = data.svg;
+                                    document.getElementById('status').innerText = data.status;
+                                    lastUpdateTime = data.timestamp;
+                                    // 开始轮询更新
+                                    pollBoardUpdates();
+                                }});
+                        }});
+                    </script>
                 </head>
                 <body>
-                    <div class="board">{self.current_svg}</div>
-                    <div class="status">{self.status_text}</div>
+                    <div class="board-container">
+                        <div id="board" class="board">{current_svg}</div>
+                    </div>
+                    <div id="status" class="status">{status_text}</div>
                 </body>
                 </html>
                 """
-                with open(self.html_path, "w", encoding="utf-8") as f:
-                    f.write(html_content)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", len(html_content.encode("utf-8")))
+                self.end_headers()
+                self.wfile.write(html_content.encode("utf-8"))
 
-            def _auto_update(self):
-                """定期更新HTML文件"""
-                last_svg = ""
-                last_status = ""
+            def send_board_data(self):
+                """发送当前棋盘数据"""
+                nonlocal current_svg, status_text, last_update_time
 
-                while self.running:
-                    if self.current_svg != last_svg or self.status_text != last_status:
-                        self._create_html()
-                        last_svg = self.current_svg
-                        last_status = self.status_text
-                    time.sleep(0.5)
+                data = {
+                    "svg": current_svg,
+                    "status": status_text,
+                    "timestamp": last_update_time,
+                }
 
-            def update_board(self, svg_content, status_text=""):
-                self.current_svg = svg_content
-                self.status_text = status_text
+                json_data = json.dumps(data, ensure_ascii=False)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", len(json_data.encode("utf-8")))
+                self.end_headers()
+                self.wfile.write(json_data.encode("utf-8"))
 
-                if not self.browser_opened:
-                    webbrowser.open(f"file://{self.html_path}")
-                    self.browser_opened = True
+            def handle_polling(self):
+                """处理轮询请求，根据时间戳判断是否有更新"""
+                nonlocal current_svg, status_text, last_update_time
+
+                # 从URL解析上次更新时间
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params = {
+                    k: v[0]
+                    for k, v in [
+                        p.split("=") if "=" in p else (p, [""])
+                        for p in query.split("&")
+                        if p
+                    ]
+                }
+
+                client_last_update = float(params.get("since", 0))
+
+                # 如果客户端时间戳小于服务器时间戳，说明有更新
+                has_update = client_last_update < last_update_time
+
+                data = {
+                    "updated": has_update,
+                    "svg": current_svg if has_update else "",
+                    "status": status_text if has_update else "",
+                    "timestamp": last_update_time,
+                }
+
+                json_data = json.dumps(data, ensure_ascii=False)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", len(json_data.encode("utf-8")))
+                self.end_headers()
+                self.wfile.write(json_data.encode("utf-8"))
+
+            def log_message(self, format, *args):
+                """禁止输出HTTP访问日志"""
+                pass
+
+        # 棋盘窗口类，提供更新棋盘的API
+        class ChessWindow:
+            def __init__(self, host, port):
+                self.host = host
+                self.port = port
+                self.server = None
+                self.server_thread = None
+
+            def start(self):
+                """启动HTTP服务器"""
+
+                def run_server():
+                    self.server = ThreadedHTTPServer(
+                        (self.host, self.port), ChessHTTPHandler
+                    )
+                    self.server.serve_forever()
+
+                self.server_thread = threading.Thread(target=run_server, daemon=True)
+                self.server_thread.start()
+
+                print(f"HTTP服务已启动在 http://{self.host}:{self.port}/")
+                if self.host == "0.0.0.0" or self.host == "127.0.0.1":
+                    print(f"本地访问: http://localhost:{self.port}/")
+                    print(f"局域网访问请使用：http://<你的IP地址>:{self.port}/")
+
+                return self
+
+            def update_board(self, svg_content, status_text_=""):
+                """更新棋盘内容"""
+                nonlocal current_svg, status_text, last_update_time
+
+                # 检查并确保SVG内容可以正确嵌入HTML
+                if svg_content and not svg_content.strip().startswith("<svg"):
+                    # 如果提供的不是SVG内容，可能是一个错误
+                    print(
+                        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 警告: 提供的内容不是SVG格式"
+                    )
+                else:
+                    # 确保SVG有正确的viewBox属性
+                    if svg_content and "viewBox" not in svg_content:
+                        svg_content = svg_content.replace(
+                            "<svg", '<svg viewBox="-600 -600 1200 1200"'
+                        )
+
+                current_svg = svg_content
+                status_text = status_text_
+                last_update_time = time.time()  # 更新时间戳
+
+            def stop(self):
+                """停止HTTP服务器"""
+                if self.server:
+                    self.server.shutdown()
 
         # 单例模式
-        window_instance = None
+        chess_window = None
 
         def get_window():
-            nonlocal window_instance
+            nonlocal chess_window
 
-            if window_instance is None:
-                window_instance = BrowserWindow()
+            if chess_window is None:
+                chess_window = ChessWindow(host, port).start()
+                # 自动打开浏览器
+                webbrowser.open(f"http://localhost:{port}/")
 
-            return window_instance
+            return chess_window
 
         return get_window
 
-    except ImportError as e:
+    except Exception as e:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 错误: {e}")
 
         # 回退方案
@@ -377,4 +548,4 @@ def create_window_visualization():
 
 
 # 创建全局窗口获取函数
-get_chess_window = create_window_visualization()
+get_chess_window = create_window_visualization(port=8000)
