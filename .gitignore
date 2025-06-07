@@ -4,4 +4,3 @@ python-chinese-chess
 models
 data_buffer.pkl
 current_policy.pkl
-giltest.py
