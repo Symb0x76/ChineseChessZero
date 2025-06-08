@@ -7,7 +7,8 @@ from game import Game
 from collections import deque
 from net import PolicyValueNet
 from tools import recovery_state_mcts_prob
-from torch.utils.data import DataLoader, Dataset
+
+# from torch.utils.data import DataLoader, Dataset
 from parameters import (
     PLAYOUT,
     C_PUCT,
@@ -19,6 +20,7 @@ from parameters import (
     UPDATE_INTERVAL,
     DATA_BUFFER_PATH,
     MODEL_PATH,
+    CHECK_FREQ,
 )
 
 
@@ -35,7 +37,7 @@ class TrainPipeline:
         self.batch_size = BATCH_SIZE  # 批次大小
         self.epochs = EPOCHS  # 每次训练的轮数
         self.kl_targ = KL_TARG  # kl散度控制
-        self.check_freq = 100  # 保存模型的频率
+        self.check_freq = CHECK_FREQ  # 保存模型的频率
         self.game_batch_num = GAME_BATCH_NUM  # 每次训练的游戏数量
         # self.best_win_ratio = 0.0
         # self.pure_mcts_playout_num = 500
@@ -44,15 +46,13 @@ class TrainPipeline:
         if init_model:
             try:
                 self.policy_value_net = PolicyValueNet(model_file=init_model)
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已加载上次最终模型")
+                print(f"[{time.strftime('%H:%M:%S')}] 已加载上次最终模型")
             except:
                 # 从零开始训练
-                print(
-                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 模型路径不存在，从零开始训练"
-                )
+                print(f"[{time.strftime('%H:%M:%S')}] 模型路径不存在，从零开始训练")
                 self.policy_value_net = PolicyValueNet()
         else:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 从零开始训练")
+            print(f"[{time.strftime('%H:%M:%S')}] 从零开始训练")
             self.policy_value_net = PolicyValueNet()
 
     def policy_update(self):
@@ -106,7 +106,7 @@ class TrainPipeline:
 
         print(
             (
-                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] kl:{kl:.5f},"
+                f"[{time.strftime('%H:%M:%S')}] kl:{kl:.5f},"
                 f"lr_multiplier:{self.lr_multiplier:.3f},"
                 f"loss:{loss:.3f},"
                 f"entropy:{entropy:.3f},"
@@ -128,13 +128,13 @@ class TrainPipeline:
                             self.iters = data_file["iters"]
                             del data_file
                         print(
-                            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已载入数据，缓冲区大小: {len(self.data_buffer)}, batch_size: {self.batch_size}"
+                            f"[{time.strftime('%H:%M:%S')}] 已载入数据，缓冲区大小: {len(self.data_buffer)}, batch_size: {self.batch_size}"
                         )
                         break
                     except:
                         time.sleep(10)
 
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] step i {self.iters}: ")
+                print(f"[{time.strftime('%H:%M:%S')}] step i {self.iters}: ")
                 if len(self.data_buffer) > self.batch_size:
                     loss, entropy = self.policy_update()
                     # 保存模型
@@ -147,7 +147,7 @@ class TrainPipeline:
                     # print("current self-play batch: {},win_ratio: {}".format(i + 1, win_ratio))
                     # self.policy_value_net.save_model('./current_policy.model')
                     # if win_ratio > self.best_win_ratio:
-                    #     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] New best policy!!!!!!!!")
+                    #     print(f"[{time.strftime('%H:%M:%S')}] New best policy!!!!!!!!")
                     #     self.best_win_ratio = win_ratio
                     #     # update the best_policy
                     #     self.policy_value_net.save_model('./best_policy.model')
@@ -156,13 +156,13 @@ class TrainPipeline:
                     #         self.pure_mcts_playout_num += 1000
                     #         self.best_win_ratio = 0.0
                     print(
-                        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] current self-play batch: {i + 1}"
+                        f"[{time.strftime('%H:%M:%S')}] current self-play batch: {i + 1}"
                     )
                     self.policy_value_net.save_model(
                         "models/current_policy_batch{}.pkl".format(i + 1)
                     )
         except KeyboardInterrupt:
-            print(f"\n\r[{time.strftime('%Y-%m-%d %H:%M:%S')}] quit")
+            print(f"\n\r[{time.strftime('%H:%M:%S')}] quit")
 
 
 if __name__ == "__main__":

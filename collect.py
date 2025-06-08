@@ -37,10 +37,10 @@ class CollectPipeline:
         if self.policy_value_net is None:  # 仅初始化一次
             try:
                 self.policy_value_net = PolicyValueNet(model_file=MODEL_PATH)
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已加载最新模型")
+                print(f"[{time.strftime('%H:%M:%S')}] 已加载最新模型")
             except:
                 self.policy_value_net = PolicyValueNet()
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 已加载初始模型")
+                print(f"[{time.strftime('%H:%M:%S')}] 已加载初始模型")
             self.mcts_ai = MCTS_AI(
                 self.policy_value_net.policy_value_fn,
                 c_puct=self.c_puct,
@@ -90,7 +90,7 @@ class CollectPipeline:
                             del data_file
                             self.iters += 1
                             self.data_buffer.extend(play_data)
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 成功载入数据")
+                        print(f"[{time.strftime('%H:%M:%S')}] 成功载入数据")
                         break
                     except:
                         time.sleep(30)
@@ -108,10 +108,10 @@ class CollectPipeline:
             while True:
                 iters = self.collect_data(is_shown=is_shown)
                 print(
-                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] batch i: {iters}, episode_len: {self.episode_len}"
+                    f"[{time.strftime('%H:%M:%S')}] batch i: {iters}, episode_len: {self.episode_len}"
                 )
         except KeyboardInterrupt:
-            print(f"\n\r[{time.strftime('%Y-%m-%d %H:%M:%S')}] quit")
+            print(f"\n\r[{time.strftime('%H:%M:%S')}] quit")
 
 
 if __name__ == "__main__":

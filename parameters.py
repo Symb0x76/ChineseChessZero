@@ -11,7 +11,7 @@ EPS = 0.25
 # Dirichlet噪声的α参数，表示添加噪声的分布的形状
 ALPHA = 0.2
 # 每次移动的模拟次数
-PLAYOUT = 1600
+PLAYOUT = 1200
 # 经验池大小
 BUFFER_SIZE = 100000
 # 模型地址
@@ -28,3 +28,5 @@ UPDATE_INTERVAL = 3
 KL_TARG = 0.02
 # 训练更新的次数
 GAME_BATCH_NUM = 3000
+# 保存模型的频率
+CHECK_FREQ = 10

@@ -4,6 +4,7 @@ import time
 import numpy as np
 from IPython.display import display, SVG
 from tools import decode_board, move_id2move_action, is_tie
+from frontend import get_chess_window
 
 
 class Game(object):
@@ -18,16 +19,16 @@ class Game(object):
     # 可视化棋盘
     def graphic(self, board):
         """print(
-            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] player1 take: ",
+            f"[{time.strftime('%H:%M:%S')}] player1 take: ",
             "RED" if cchess.RED else "BLACK",
         )
         print(
-            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] player0 take: ",
+            f"[{time.strftime('%H:%M:%S')}] player0 take: ",
             "BLACK" if cchess.RED else "RED",
         )"""
         svg = cchess.svg.board(
             board,
-            size=500,
+            size=600,
             coordinates=True,
             axes_type=0,
             checkers=board.checkers(),
@@ -41,8 +42,6 @@ class Game(object):
 
         # 尝试在窗口中显示
         try:
-            from tools import get_chess_window
-
             window = get_chess_window()
             if window:
                 window.update_board(svg, status_text)
@@ -102,12 +101,12 @@ class Game(object):
                     if is_shown:
                         winner_name = "RED" if winner == cchess.RED else "BLACK"
                         print(
-                            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Game end. Winner is {winner_name}"
+                            f"[{time.strftime('%H:%M:%S')}] 游戏结束. 赢家是: {winner_name}"
                         )
                 else:
                     winner = -1
                     if is_shown:
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Game end. Tie")
+                        print(f"[{time.strftime('%H:%M:%S')}] 游戏结束. 平局")
                 return winner
 
     # 使用蒙特卡洛树搜索开始自我对弈，存储游戏状态（状态，蒙特卡洛落子概率，胜负手）三元组用于神经网络训练
@@ -143,7 +142,7 @@ class Game(object):
                     self.board, temp=temp, return_prob=True
                 )
                 print(
-                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 第{move_count}步耗时: {time.time() - start_time:.2f}秒"
+                    f"[{time.strftime('%H:%M:%S')}] 第{move_count}步耗时: {time.time() - start_time:.2f}秒"
                 )
             else:
                 move, move_probs = player.get_action(
@@ -180,13 +179,13 @@ class Game(object):
                     if is_shown:
                         winner_name = "RED" if winner == cchess.RED else "BLACK"
                         print(
-                            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Game end. Winner is: {winner_name}"
+                            f"[{time.strftime('%H:%M:%S')}] 游戏结束. 赢家是: {winner_name}"
                         )
                 else:
                     # 平局情况
                     winner = -1
                     if is_shown:
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Game end. Tie")
+                        print(f"[{time.strftime('%H:%M:%S')}] 游戏结束. 平局")
 
                 # 重置蒙特卡洛根节点
                 player.reset_player()
