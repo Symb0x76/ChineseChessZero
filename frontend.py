@@ -235,11 +235,11 @@ def create_window_visualization(host="127.0.0.1", port=8000):
             try:
                 # 处理可能导致解析问题的特殊字符
                 svg_content = (
-                    svg_content.replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                    .replace('"', "&quot;")
-                    .replace("'", "&#39;")
+                    svg_content.replace("&", "&")
+                    .replace("<", "<")
+                    .replace(">", ">")
+                    .replace('"', '"')
+                    .replace("'", "'")
                 )
 
                 # 还原 SVG 标签和属性
