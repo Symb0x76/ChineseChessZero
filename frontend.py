@@ -20,6 +20,9 @@ def create_window_visualization(host="127.0.0.1", port=8000):
 
             daemon_threads = True
 
+            def handle_error(self, request, client_address):
+                pass
+
         class ChessHTTPHandler(SimpleHTTPRequestHandler):
             """处理棋盘HTTP请求的处理程序"""
 
@@ -199,10 +202,10 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                             self.wfile.write(f": heartbeat\n\n".encode("utf-8"))
                             self.wfile.flush()
 
-                            # 每秒检查一次是否有更新
+                            # 每5秒检查一次是否有更新
                             time.sleep(5)
                         except (BrokenPipeError, ConnectionResetError) as e:
-                            print(f"[{time.strftime('%H:%M:%S')}] 客户端连接中断: {e}")
+                            print(f"[{time.strftime('%H:%M:%S')}] 客户端连接中断")
                 except (
                     ConnectionResetError,
                     ConnectionAbortedError,
@@ -210,7 +213,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                     TimeoutError,
                     OSError,
                 ) as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] 连接已关闭: {e}")
+                    print(f"[{time.strftime('%H:%M:%S')}] 连接已关闭")
                     # 客户端断开连接，结束事件流
                     return
 
@@ -232,11 +235,11 @@ def create_window_visualization(host="127.0.0.1", port=8000):
             try:
                 # 处理可能导致解析问题的特殊字符
                 svg_content = (
-                    svg_content.replace("&", "&")
-                    .replace("<", "<")
-                    .replace(">", ">")
-                    .replace('"', '"')
-                    .replace("'", "'")
+                    svg_content.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace('"', "&quot;")
+                    .replace("'", "&#39;")
                 )
 
                 # 还原 SVG 标签和属性
