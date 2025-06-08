@@ -54,10 +54,10 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                         body {{ display: flex; flex-direction: column; align-items: center;
                             font-family: Arial, sans-serif; background-color: #f5f5f5; }}
                         .board-container {{ margin: 20px; background-color: #f2d16b; border: 2px; padding: 10px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); }}
-                        .board {{ width: 500px; height: 550px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; }}
-                        .board svg {{ width: 100%; height: 100%; }}
+                        .board {{ width: 500px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; }}
+                        .board img {{ width: 100%; }}
                         .status {{ font-weight: bold; font-size: 16px; margin: 10px; text-align: center; }}
-                        .connection-status {{ color: #666; font-size: 12px; margin: 5px; }}
+                        .connection-status {{ color: #666; font-size: 12px; margin: 5px; text-align: center; }}
                     </style>
                     <script>
                         // 使用EventSource处理所有更新, 包括初始状态
@@ -72,22 +72,9 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                             // SVG更新事件
                             evtSource.addEventListener('svg', function(e) {{
                                 const boardDiv = document.getElementById('board');
-                                // 清空现有内容
-                                while (boardDiv.firstChild) {{
-                                    boardDiv.removeChild(boardDiv.firstChild);
-                                }}
                                 try {{
-                                    boardDiv.innerHTML = e.data;
-                                    // 处理SVG保证适当大小
-                                    const svg = boardDiv.querySelector('svg');
-                                    if (svg) {{
-                                        svg.setAttribute('width', '100%');
-                                        svg.setAttribute('height', '100%');
-                                        // 保证ViewBox属性存在
-                                        if (!svg.hasAttribute('viewBox')) {{
-                                            svg.setAttribute('viewBox', '-600 -600 1200 1200');
-                                        }}
-                                    }}
+                                    const img = boardDiv.querySelector('#boardimg');
+                                    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(e.data);
                                 }} catch (error) {{
                                 console.error('EventSource error:', error);
                                 boardDiv.innerHTML = '<p style="color: red;">SVG数据格式错误</p>'
@@ -114,7 +101,8 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                 </head>
                 <body>
                     <div class="board-container">
-                        <div id="board" class="board">{current_svg}</div>
+                        <div id="board" class="board">
+                            <img id="boardimg"/>
                     </div>
                     <div id="status" class="status">{status_text}</div>
                     <div id="connection-status" class="connection-status">准备连接...</div>
@@ -213,7 +201,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                     TimeoutError,
                     OSError,
                 ) as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] 连接已关闭")
+                    # print(f"[{time.strftime('%H:%M:%S')}] 连接已关闭")
                     # 客户端断开连接，结束事件流
                     return
 
