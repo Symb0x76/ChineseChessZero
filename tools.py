@@ -4,21 +4,22 @@ import numpy as np
 
 def decode_board(board):
     """
-    将棋盘状态转换为神经网络输入格式
+    将棋盘状态转换为神经网络输入格式的一层
 
     参数:
         board: cchess.Board对象
 
     返回:
-        一个形状为 [channels, height, width] 的numpy数组
+        两个形状均为 [7, 10, 9] 的numpy数组, 分别代表红方和黑方棋子
     """
-    # 初始化一个全零数组，15个通道（7种棋子×2方 + 1个当前玩家指示器）
-    state = np.zeros((15, 10, 9), dtype=np.int8)
+    # 初始化两个全零数组，各7个通道（7种棋子），分别表示红方和黑方
+    red_state = np.zeros((7, 10, 9), dtype=np.int8)
+    black_state = np.zeros((7, 10, 9), dtype=np.int8)
 
     # 遍历棋盘上的每个位置
     for i in range(10):
         for j in range(9):
-            square = j + i * 9  # 使用正确的索引计算方式
+            square = j + i * 9
             piece = board.piece_at(square)
             # print(piece)
             if piece:
@@ -26,24 +27,14 @@ def decode_board(board):
                 piece_type = piece.piece_type
                 color = piece.color
 
-                # 设置对应通道的值为1
-                # 红方棋子在通道0-6，黑方棋子在通道7-13
+                # 根据棋子类型和颜色设置对应通道的值
                 channel_idx = piece_type - 1
-                if color == cchess.BLACK:
-                    channel_idx += 7
+                if color == cchess.RED:
+                    red_state[channel_idx, i, j] = 1
+                else:
+                    black_state[channel_idx, i, j] = 1
 
-                state[channel_idx, i, j] = 1.0
-
-    # 设置当前玩家指示器
-    if board.turn == cchess.RED:
-        state[14, :, :] = 1
-    elif board.turn == cchess.BLACK:
-        state[14, :, :] = 0
-
-    return state
-
-
-# print(decode_board(board))
+    return red_state, black_state
 
 
 def is_tie(board):
@@ -61,9 +52,6 @@ def is_tie(board):
         or board.is_fourfold_repetition()
         or board.is_sixty_moves()
     )
-
-
-# print(is_tie(board))
 
 
 def softmax(x):
@@ -119,21 +107,21 @@ def recovery_array(array, data=0.0):
     return recovery_res
 
 
-# (state, mcts_prob, winner) ((15,10,9),2086,1) => ((15,90),(2,1043),1)
-def zip_state_mcts_prob(tuple):
+# (state, mcts_prob, winner) ((14,10,9),2086,1) => ((14,90),(2,1043),1)
+def zip_state_mcts_prob(tuple, half=True):
     state, mcts_prob, winner = tuple
-    state = state.reshape((15, -1))
+    state = state.reshape((7 if half else 14, -1))
     mcts_prob = mcts_prob.reshape((2, -1))
     state = zip_array(state)
     mcts_prob = zip_array(mcts_prob)
     return state, mcts_prob, winner
 
 
-def recovery_state_mcts_prob(tuple):
+def recovery_state_mcts_prob(tuple, half=True):
     state, mcts_prob, winner = tuple
     state = recovery_array(state)
     mcts_prob = recovery_array(mcts_prob)
-    state = state.reshape((15, 10, 9))
+    state = state.reshape((7 if half else 14, 10, 9))
     mcts_prob = mcts_prob.reshape(2086)
     return state, mcts_prob, winner
 

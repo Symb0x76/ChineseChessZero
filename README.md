@@ -9,7 +9,6 @@
 
 -   [ ] 实现网页人机对下互动 GUI
 -   [ ] 优化参数
--   [ ] 解决 collect.py 多开显卡占用率不高的问题
 -   [ ] 使用 DataLoaders 优化数据加载
 
 ## 使用方法
@@ -20,10 +19,13 @@
 git clone https://github.com/Symb0x76/ChineseChessZero.git
 ```
 
-2.  按照[python-chinese-chess](https://github.com/windshadow233/python-chinese-chess)项目的说明安装依赖库 cchess
-3.  按照[Pytorch](https://pytorch.org) 官网的说明安装支持 cuda 的 torch
+2.  按照 [python-chinese-chess](https://github.com/windshadow233/python-chinese-chess) 的说明安装依赖 cchess
 
-4.  安装其他依赖库
+3.  按照 [Pytorch](https://pytorch.org) 的说明安装 torch
+
+4.  下载 [HDF5](https://www.hdfgroup.org/download-hdf5) 支持库
+
+5.  安装其他依赖库
 
 ```pip
 pip install -r requirements.txt
@@ -35,19 +37,13 @@ pip install -r requirements.txt
 python collect.py
 ```
 
-如果配置比较好可以选择使用解除 gil 锁的 python3.13t 并发运行
-
-但是当前 collect.py 多开会导致 gpu 占用率降到 50%，需要至少 8 并行才能实现正提升
-
-可以运行`python collect.py --show`来可视化对弈过程
+可以添加参数`--show`来可视化对弈过程
 
 6.  运行 train.py
 
 ```python
 python train.py
 ```
-
-仅单开
 
 ## 参考
 

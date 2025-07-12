@@ -39,7 +39,7 @@ class ResBlock(nn.Module):
         return self.conv2_act(y)
 
 
-# 构建骨干网络, 输入: N, 15, 10, 9 --> N, C, H, W
+# 构建骨干网络, 输入: N, 17, 7, 10, 9 --> N, D, C, H, W
 class Net(nn.Module):
     def __init__(
         self, num_channels=256, num_res_blocks=40
@@ -103,10 +103,10 @@ class Net(nn.Module):
 
 
 class PolicyValueNet(object):
-    def __init__(self, model_file=None, use_gpu=True, device="cuda"):
+    def __init__(self, model_file=None, use_gpu=True):
         self.use_gpu = use_gpu
         self.l2_const = 2e-3  # l2 正则化
-        self.device = device
+        self.device = DEVICE
         self.policy_value_net = Net().to(self.device)
         self.optimizer = torch.optim.Adam(
             params=self.policy_value_net.parameters(),
@@ -151,7 +151,7 @@ class PolicyValueNet(object):
                     self.device, non_blocking=True
                 )
                 # 使用神经网络进行预测
-                with autocast(str(DEVICE)):  # 半精度fp16
+                with autocast(str(DEVICE)):
                     log_act_probs, value = self.policy_value_net(current_state)
                 log_act_probs, value = log_act_probs.to(
                     "cpu", non_blocking=True
@@ -159,7 +159,7 @@ class PolicyValueNet(object):
             torch.cuda.current_stream().wait_stream(self.stream)
         else:
             current_state = torch.as_tensor(current_state).to(self.device)
-            with autocast(str(DEVICE)):  # 半精度fp16
+            with autocast(str(DEVICE)):
                 log_act_probs, value = self.policy_value_net(current_state)
             log_act_probs, value = log_act_probs.cpu(), value.cpu()
         # 只取出合法动作

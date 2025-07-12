@@ -201,7 +201,7 @@ class MCTS_AI(object):
             # 更新根节点并重用搜索树
             self.mcts.update_with_move(move)
         else:
-            # 使用默认的temp=1e-3，它几乎相当于选择具有最高概率的移动
+            # 使用默认的temp=1e-3，几乎相当于选择具有最高概率的移动
             move = np.random.choice(acts, p=probs)
             # 重置根节点
             self.mcts.update_with_move(-1)

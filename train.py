@@ -2,6 +2,7 @@ import cchess
 import random
 import pickle
 import time
+import argparse
 import numpy as np
 from game import Game
 from collections import deque
@@ -18,7 +19,7 @@ from parameters import (
     BUFFER_SIZE,
     GAME_BATCH_NUM,
     UPDATE_INTERVAL,
-    DATA_BUFFER_PATH,
+    DATA_PATH,
     MODEL_PATH,
     CHECK_FREQ,
 )
@@ -43,13 +44,17 @@ class TrainPipeline:
         # self.pure_mcts_playout_num = 500
         self.buffer_size = BUFFER_SIZE  # 经验池大小
         self.data_buffer = deque(maxlen=self.buffer_size)
+        self.train_iters = 0  # 训练迭代计数
+        self.data_iters = 0  # 数据收集迭代计数
         if init_model:
             try:
                 self.policy_value_net = PolicyValueNet(model_file=init_model)
-                print(f"[{time.strftime('%H:%M:%S')}] 已加载上次最终模型")
-            except:
+                print(f"[{time.strftime('%H:%M:%S')}] 已加载模型: {init_model}")
+            except Exception as e:
                 # 从零开始训练
-                print(f"[{time.strftime('%H:%M:%S')}] 模型路径不存在，从零开始训练")
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] 模型 {init_model} 加载失败: {str(e)}，从零开始训练"
+                )
                 self.policy_value_net = PolicyValueNet()
         else:
             print(f"[{time.strftime('%H:%M:%S')}] 从零开始训练")
@@ -106,65 +111,122 @@ class TrainPipeline:
 
         print(
             (
-                f"[{time.strftime('%H:%M:%S')}] kl:{kl:.5f},"
-                f"lr_multiplier:{self.lr_multiplier:.3f},"
-                f"loss:{loss:.3f},"
-                f"entropy:{entropy:.3f},"
-                f"explained_var_old:{explained_var_old:.9f},"
-                f"explained_var_new:{explained_var_new:.9f}"
+                f"[{time.strftime('%H:%M:%S')}] kl:{kl:.6f},"
+                f"lr_multiplier:{self.lr_multiplier:.6f},"
+                f"loss:{loss:.6f},"
+                f"entropy:{entropy:.6f},"
+                f"explained_var_old:{explained_var_old:.6f},"
+                f"explained_var_new:{explained_var_new:.6f}"
             )
         )
         return loss, entropy
 
+    def save_train_state(self):
+        """保存训练状态"""
+        train_state = {
+            "train_iters": self.train_iters,
+            "data_iters": self.data_iters,
+            "lr_multiplier": self.lr_multiplier,
+        }
+        with open("train_state.pkl", "wb") as f:
+            pickle.dump(train_state, f)
+
+    def load_train_state(self):
+        """加载训练状态"""
+        try:
+            with open("train_state.pkl", "rb") as f:
+                train_state = pickle.load(f)
+                self.train_iters = train_state["train_iters"]
+                self.data_iters = train_state["data_iters"]
+                self.lr_multiplier = train_state["lr_multiplier"]
+            print(
+                f"[{time.strftime('%H:%M:%S')}] 已加载训练状态: 训练迭代 {self.train_iters}, 数据迭代 {self.data_iters}"
+            )
+            return True
+        except:
+            print(f"[{time.strftime('%H:%M:%S')}] 无法加载训练状态，从头开始训练")
+            return False
+
     def run(self):
         """开始训练"""
         try:
-            for i in range(self.game_batch_num):
-                while True:
+            # 尝试加载之前的训练状态
+            self.load_train_state()
+
+            while self.train_iters < self.game_batch_num:
+                # 加载最新数据
+                new_data = False
+                while not new_data:
                     try:
-                        with open(DATA_BUFFER_PATH, "rb") as data_dict:
+                        with open(DATA_PATH, "rb") as data_dict:
                             data_file = pickle.load(data_dict)
                             self.data_buffer = data_file["data_buffer"]
-                            self.iters = data_file["iters"]
-                            del data_file
+                            current_data_iters = data_file["iters"]
+
+                            # 检查是否有新数据
+                            if current_data_iters > self.data_iters:
+                                self.data_iters = current_data_iters
+                                new_data = True
+                                print(
+                                    f"[{time.strftime('%H:%M:%S')}] 已载入新数据，数据迭代: {self.data_iters}, 缓冲区大小: {len(self.data_buffer)}"
+                                )
+                            else:
+                                print(
+                                    f"[{time.strftime('%H:%M:%S')}] 等待新数据... 当前数据迭代: {self.data_iters}, 训练迭代: {self.train_iters}"
+                                )
+                                time.sleep(UPDATE_INTERVAL)
+                    except Exception as e:
                         print(
-                            f"[{time.strftime('%H:%M:%S')}] 已载入数据，缓冲区大小: {len(self.data_buffer)}, batch_size: {self.batch_size}"
+                            f"[{time.strftime('%H:%M:%S')}] 加载数据失败: {str(e)}，10秒后重试"
                         )
-                        break
-                    except:
                         time.sleep(10)
 
-                print(f"[{time.strftime('%H:%M:%S')}] step i {self.iters}: ")
+                # 执行训练
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] 训练迭代 {self.train_iters}, 数据迭代 {self.data_iters}"
+                )
                 if len(self.data_buffer) > self.batch_size:
                     loss, entropy = self.policy_update()
-                    # 保存模型
+
+                    # 保存模型和训练状态
                     self.policy_value_net.save_model(MODEL_PATH)
+                    self.train_iters += 1
+                    self.save_train_state()
 
-                time.sleep(UPDATE_INTERVAL)  # 每10s更新一次模型
-
-                if (i + 1) % self.check_freq == 0:
-                    # win_ratio = self.policy_evaluate()
-                    # print("current self-play batch: {},win_ratio: {}".format(i + 1, win_ratio))
-                    # self.policy_value_net.save_model('./current_policy.model')
-                    # if win_ratio > self.best_win_ratio:
-                    #     print(f"[{time.strftime('%H:%M:%S')}] New best policy!!!!!!!!")
-                    #     self.best_win_ratio = win_ratio
-                    #     # update the best_policy
-                    #     self.policy_value_net.save_model('./best_policy.model')
-                    #     if (self.best_win_ratio == 1.0 and
-                    #             self.pure_mcts_playout_num < 5000):
-                    #         self.pure_mcts_playout_num += 1000
-                    #         self.best_win_ratio = 0.0
-                    print(
-                        f"[{time.strftime('%H:%M:%S')}] current self-play batch: {i + 1}"
-                    )
-                    self.policy_value_net.save_model(
-                        "models/current_policy_batch{}.pkl".format(i + 1)
-                    )
+                    # 定期保存检查点
+                    if self.train_iters % self.check_freq == 0:
+                        # win_ratio = self.policy_evaluate()
+                        # print("current self-play batch: {},win_ratio: {}".format(i + 1, win_ratio))
+                        # self.policy_value_net.save_model('./current_policy.model')
+                        # if win_ratio > self.best_win_ratio:
+                        #     print(f"[{time.strftime('%H:%M:%S')}] New best policy!!!!!!!!")
+                        #     self.best_win_ratio = win_ratio
+                        #     # update the best_policy
+                        #     self.policy_value_net.save_model('./best_policy.model')
+                        #     if (self.best_win_ratio == 1.0 and
+                        #             self.pure_mcts_playout_num < 5000):
+                        #         self.pure_mcts_playout_num += 1000
+                        #         self.best_win_ratio = 0.0
+                        print(
+                            f"[{time.strftime('%H:%M:%S')}] 保存检查点: 训练迭代 {self.train_iters}"
+                        )
+                        self.policy_value_net.save_model(
+                            f"models/current_policy_batch{self.train_iters}.pkl"
+                        )
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] 数据不足，等待更多数据")
+                    time.sleep(UPDATE_INTERVAL)
         except KeyboardInterrupt:
-            print(f"\n\r[{time.strftime('%H:%M:%S')}] quit")
+            print(f"\r[{time.strftime('%H:%M:%S')}] 保存训练状态并退出")
+            self.save_train_state()
 
 
 if __name__ == "__main__":
-    training_pipeline = TrainPipeline(init_model="current_policy.pkl")
+    # 添加命令行参数解析
+    parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
+    parser.add_argument(
+        "--model", type=str, default="current_policy.pkl", help="初始化模型路径"
+    )
+    args = parser.parse_args()
+    training_pipeline = TrainPipeline(init_model=args.model)
     training_pipeline.run()

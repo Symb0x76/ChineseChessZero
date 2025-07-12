@@ -18,17 +18,9 @@ class Game(object):
 
     # 可视化棋盘
     def graphic(self, board):
-        """print(
-            f"[{time.strftime('%H:%M:%S')}] player1 take: ",
-            "RED" if cchess.RED else "BLACK",
-        )
-        print(
-            f"[{time.strftime('%H:%M:%S')}] player0 take: ",
-            "BLACK" if cchess.RED else "RED",
-        )"""
         svg = cchess.svg.board(
             board,
-            size=600,
+            size=720,
             coordinates=True,
             axes_type=0,
             checkers=board.checkers(),
@@ -46,7 +38,7 @@ class Game(object):
             if window:
                 window.update_board(svg, status_text)
                 # 给窗口一点时间更新
-                time.sleep(0.1)
+                time.sleep(0.01)
             else:
                 # 如果窗口创建失败，回退到终端显示
                 display(SVG(svg))
@@ -120,18 +112,19 @@ class Game(object):
             temp: 温度参数，控制探索度
 
         Returns:
-            winner: 获胜方
-            play_data: 包含(state, mcts_prob, winner)的元组列表，用于训练
+            TODO
         """
         # 初始化棋盘
         self.board = cchess.Board()
-
-        # 初始化数据收集列表
-        states, mcts_probs, current_players = [], [], []
-
-        # 开始自我对弈
+        init_red_state, init_black_state = decode_board(self.board)
+        mcts_probs, current_players = [], []
         move_count = 0
 
+        # 初始化状态缓存 - 为每方存储最近8步的状态
+        red_states = [init_red_state.copy() for _ in range(8)]
+        black_states = [init_black_state.copy() for _ in range(8)]
+
+        # 开始自我对弈
         while True:
             move_count += 1
 
@@ -142,7 +135,7 @@ class Game(object):
                     self.board, temp=temp, return_prob=True
                 )
                 print(
-                    f"[{time.strftime('%H:%M:%S')}] 第{move_count}步耗时: {time.time() - start_time:.2f}秒"
+                    f"[{time.strftime('%H:%M:%S')}] 第 {move_count} 步耗时 {time.time() - start_time:.2f} 秒"
                 )
             else:
                 move, move_probs = player.get_action(
@@ -150,10 +143,13 @@ class Game(object):
                 )
 
             # 保存自我对弈的数据
-            current_state = decode_board(self.board)
-            states.append(current_state)
+            red_state, black_state = decode_board(self.board)
             mcts_probs.append(move_probs)
             current_players.append(self.board.turn)
+            red_states.pop()
+            red_states.insert(0, red_state)
+            black_states.pop()
+            black_states.insert(0, black_state)
 
             # 执行一步落子
             self.board.push(cchess.Move.from_uci(move_id2move_action[move]))
@@ -174,7 +170,7 @@ class Game(object):
                     winner = outcome.winner
                     # 根据胜方设置奖励
                     for i, player_id in enumerate(current_players):
-                        winner_z[i] = 1.0 if player_id == winner else -1.0
+                        winner_z[i] = 1 if player_id == winner else -1
 
                     if is_shown:
                         winner_name = "RED" if winner == cchess.RED else "BLACK"
@@ -190,5 +186,5 @@ class Game(object):
                 # 重置蒙特卡洛根节点
                 player.reset_player()
 
-                # 返回胜方和游戏数据
-                return winner, zip(states, mcts_probs, winner_z)
+                # 返回游戏数据
+                return zip(red_states, black_states, mcts_probs, winner_z)
