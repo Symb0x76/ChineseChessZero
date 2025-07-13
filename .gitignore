@@ -2,7 +2,7 @@ __pycache__
 .vscode
 python-chinese-chess
 models
-data_buffer.pkl
+data
 current_policy.pkl
 mcts_pure.py
 test.ipynb

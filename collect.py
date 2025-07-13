@@ -2,13 +2,20 @@ import cchess
 import time
 import os
 import argparse
+import pickle
+import shelve
 import numpy as np
-import pandas as pd
 from net import PolicyValueNet
 from mcts import MCTS_AI
 from game import Game
 from parameters import C_PUCT, PLAYOUT, DATA_PATH, MODEL_PATH
-from tools import move_id2move_action, move_action2move_id, flip, zip_state, zip_probs
+from tools import (
+    move_id2move_action,
+    move_action2move_id,
+    flip,
+    zip_state,
+    zip_probs,
+)
 
 """
 产生的数据应该为17*7*10*9的数组
@@ -34,8 +41,8 @@ class CollectPipeline:
         # 尝试从已有文件加载 iters
         if os.path.exists(DATA_PATH):
             try:
-                with pd.HDFStore(DATA_PATH, "r") as store:
-                    self.iters = store.get("iters")[0]
+                with shelve.open(DATA_PATH) as data_file:
+                    self.iters = data_file.get("iters", 0)
                     print(
                         f"[{time.strftime('%H:%M:%S')}] 成功加载当前对局数: {self.iters}"
                     )
@@ -82,7 +89,8 @@ class CollectPipeline:
                 current_player = np.zeros((1, 7, 10, 9), dtype=np.float16)
 
             # 堆叠出完整状态
-            states = np.concatenate((red_states, black_states, current_player), axis=0)
+            states = np.concatenate((red_states, black_states), axis=0)
+            states = np.concatenate((states, current_player), axis=0)
 
             # 确保mcts_prob是NumPy数组
             if not isinstance(mcts_prob, np.ndarray):
@@ -106,8 +114,8 @@ class CollectPipeline:
         for states, mcts_prob, winner in data:
             # 左右对称翻转红方和黑方状态
             states_flip = []
-            for i in range(len(states)):
-                states_flip.append(np.flip(states[i], axis=2))
+            for state in states:
+                states_flip.append(np.flip(state, axis=2))
             # 向量化操作翻转概率
             mcts_prob_flip = mcts_prob[flip_map]
             data_flip.append((states_flip, mcts_prob_flip, winner))
@@ -125,11 +133,7 @@ class CollectPipeline:
         # 压缩数据
         compressed_data = []
         for states, mcts_probs, winner in data:
-            compressed_states = []
-            for state in states:
-                state = zip_state(state)
-                compressed_states.append(state)
-            compressed_data.append((compressed_states, zip_probs(mcts_probs), winner))
+            compressed_data.append((zip_state(states), zip_probs(mcts_probs), winner))
         return compressed_data
 
     def collect_data(self, is_shown=False):
@@ -139,13 +143,11 @@ class CollectPipeline:
         play_data = self.preprocess(play_data)  # 预处理数据
         play_data = self.flip_data(play_data)  # 翻转数据
         play_data = self.compress(play_data)  # 压缩数据
-        play_data = pd.DataFrame(play_data, columns=["states", "mcts_probs", "winners"])
         self.iters += 1  # 更新迭代次数
 
         try:
-            with pd.HDFStore(DATA_PATH, "a") as store:
-                store.put("data", play_data, format="table")
-                store.put("iters", pd.DataFrame([self.iters]), format="table")
+            with shelve.open(DATA_PATH) as data_file:
+                data_file["data_" + str(self.iters)] = play_data
             print(f"[{time.strftime('%H:%M:%S')}] 成功保存数据到 {DATA_PATH}")
             del play_data  # 释放内存
         except Exception as e:

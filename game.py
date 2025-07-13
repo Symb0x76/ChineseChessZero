@@ -30,6 +30,7 @@ class Game(object):
         # 为每方存储最近8步的状态
         self.red_states = [init_red_state.copy() for _ in range(8)]
         self.black_states = [init_black_state.copy() for _ in range(8)]
+        # print(f"red_states shape: {np.array(self.red_states).shape}")
 
     def update_states_history(self):
         # 获取当前棋盘状态
@@ -199,7 +200,7 @@ class Game(object):
                         )
                 else:
                     # 平局情况
-                    winner = -1
+                    winner = 0
                     if is_shown:
                         print(f"[{time.strftime('%H:%M:%S')}] 游戏结束. 平局")
 
@@ -207,4 +208,7 @@ class Game(object):
                 player.reset_player()
 
                 # 返回游戏数据
-                return zip(self.red_states, self.black_states, mcts_probs, winner_z)
+                return [
+                    (self.red_states, self.black_states, mcts_probs[i], winner_z[i])
+                    for i in range(len(mcts_probs))
+                ]

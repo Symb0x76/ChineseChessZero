@@ -23,9 +23,7 @@ git clone https://github.com/Symb0x76/ChineseChessZero.git
 
 3.  按照 [Pytorch](https://pytorch.org) 的说明安装 torch
 
-4.  下载 [HDF5](https://www.hdfgroup.org/download-hdf5) 支持库
-
-5.  安装其他依赖库
+4.  安装其他依赖库
 
 ```pip
 pip install -r requirements.txt

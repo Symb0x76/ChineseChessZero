@@ -11,13 +11,13 @@ EPS = 0.25
 # Dirichlet噪声的α参数，表示添加噪声的分布的形状
 ALPHA = 0.2
 # 每次移动的模拟次数
-PLAYOUT = 10
+PLAYOUT = 1
 # 经验池大小
 BUFFER_SIZE = 100000
 # 模型地址
 MODEL_PATH = "current_policy.pkl"
 # 训练数据容器地址
-DATA_PATH = "data.h5"
+DATA_PATH = "data"
 # 训练数据批次大小
 BATCH_SIZE = 512
 # 训练轮数

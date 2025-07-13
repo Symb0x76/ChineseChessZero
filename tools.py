@@ -60,104 +60,51 @@ def softmax(x):
     return probs
 
 
-def zip_array(array, data=0.0):
+def zip_state(array, data=0.0):
     """
     将数组压缩为稀疏数组格式
 
     参数:
-        array: 二维numpy数组
+        array: 任意维度的numpy数组
         data: 需要压缩的值, 默认为0.
 
     返回:
         压缩后的列表
     """
     array = np.array(array) if isinstance(array, list) else array  # 确保输入是numpy数组
-    depth, rows, cols = array.shape
-    zip_res = [[depth, rows, cols]]
+    shape = array.shape
+    zip_res = [list(shape)]  # 保存原始形状
 
-    for i in range(depth):
-        for j in range(rows):
-            for k in range(cols):
-                if array[i, j, k] != data:
-                    zip_res.append([i, j, k, array[i, j, k]])
-
-    return zip_res  # 直接返回列表，不转换为numpy数组
+    # 使用np.ndenumerate迭代任意维度数组的所有元素
+    for idx, val in np.ndenumerate(array):
+        if val != data:
+            zip_res.append(list(idx) + [val])
+    return zip_res
 
 
-def recovery_array(array, data=0.0):
+def recovery_state(array, data=0.0):
     """
-    从稀疏数组恢复为三维数组
+    从稀疏数组恢复为任意维度数组
 
     参数:
         array: 压缩后的列表或numpy数组
         data: 填充的默认值, 默认为0.
 
     返回:
-        恢复后的三维numpy数组
+        恢复后的numpy数组
     """
-    # 将array转换为列表进行操作，确保兼容性
     array = array.tolist() if isinstance(array, np.ndarray) else array
 
-    depth, rows, cols = array[0]
-    recovery = np.full((int(depth), int(rows), int(cols)), data)
+    shape = [int(dim) for dim in array[0]]
+    recovery = np.full(shape, data)
 
     for i in range(1, len(array)):
-        depth_idx = int(array[i][0])
-        row_idx = int(array[i][1])
-        col_idx = int(array[i][2])
-        recovery[depth_idx, row_idx, col_idx] = array[i][3]
+        # 最后一个元素是值，其余是索引
+        idx = tuple(int(x) for x in array[i][:-1])
+        val = array[i][-1]
+        recovery[idx] = val
 
     return recovery
-
-
-"""
-# (state, mcts_prob, winner) ((7,10,9),2086,1) => ((7,90),(2,1043),1)
-def zip_state_mcts_prob(tuple):
-    state, mcts_prob, winner = tuple
-    state = state.reshape((7, -1))
-    mcts_prob = mcts_prob.reshape((2, -1))
-    state = zip_array(state)
-    mcts_prob = zip_array(mcts_prob)
-    return state, mcts_prob, winner
-
-
-def recovery_state_mcts_prob(tuple):
-    state, mcts_prob, winner = tuple
-    state = recovery_array(state)
-    mcts_prob = recovery_array(mcts_prob)
-    state = state.reshape((7, 10, 9))
-    mcts_prob = mcts_prob.reshape(2086)
-    return state, mcts_prob, winner
-"""
-
-
-def zip_state(state):
-    """
-    将状态数组压缩为稀疏数组格式
-
-    参数:
-        state: 状态数组，形状为 (7, 10, 9)
-
-    返回:
-        压缩后的列表
-    """
-    state = state.reshape((7, -1))
-    return zip_array(state)
-
-
-def recovery_state(state):
-    """
-    从稀疏数组恢复为状态数组
-
-    参数:
-        state: 压缩后的列表或numpy数组
-
-    返回:
-        恢复后的状态数组，形状为 (7, 10, 9)
-    """
-    state = recovery_array(state)
-    state = state.reshape((7, 10, 9))
-    return state
 
 
 def zip_probs(mcts_prob):
@@ -171,7 +118,7 @@ def zip_probs(mcts_prob):
         压缩后的列表
     """
     mcts_prob = mcts_prob.reshape((2, -1))
-    return zip_array(mcts_prob)
+    return zip_state(mcts_prob)
 
 
 def recovery_probs(mcts_prob):
@@ -184,7 +131,7 @@ def recovery_probs(mcts_prob):
     返回:
         恢复后的MCTS概率数组，形状为 (2, 1043)
     """
-    mcts_prob = recovery_array(mcts_prob)
+    mcts_prob = recovery_state(mcts_prob)
     mcts_prob = mcts_prob.reshape(2086)
     return mcts_prob
 

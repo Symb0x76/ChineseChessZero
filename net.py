@@ -48,9 +48,15 @@ class Net(nn.Module):
         # 全局特征
         # self.global_conv = nn.Conv2D(in_channels=15, out_channels=512, kernel_size=(10, 9))
         # self.global_bn = nn.BatchNorm2D(512)
+        # 处理5维输入
+        self.input_channels = 17 * 7
         # 初始化特征
         self.conv_block = nn.Conv2d(
-            15, num_channels, kernel_size=(3, 3), stride=(1, 1), padding=1
+            self.input_channels,
+            num_channels,
+            kernel_size=(3, 3),
+            stride=(1, 1),
+            padding=1,
         )
         self.conv_block_bn = nn.BatchNorm2d(
             num_channels,
@@ -76,6 +82,11 @@ class Net(nn.Module):
         self.value_fc2 = nn.Linear(256, 1)
 
     def forward(self, x):
+        # 处理输入形状 [N, 17, 7, 10, 9]
+        batch_size = x.shape[0]
+        # 将形状从 [N, 17, 7, 10, 9] 重塑为 [N, 17*7, 10, 9]
+        x = x.view(batch_size, -1, 10, 9)
+
         # 公共头
         x = self.conv_block(x)
         x = self.conv_block_bn(x)
