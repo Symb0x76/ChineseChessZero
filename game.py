@@ -15,6 +15,31 @@ class Game(object):
 
     def __init__(self, board):
         self.board = board
+        self.red_states = None
+        self.black_states = None
+        self.reset_states_history()
+
+    def reset_states_history(self):
+        # 初始化棋盘状态时调用
+        if hasattr(self, "board") and self.board:
+            init_red_state, init_black_state = decode_board(self.board)
+        else:
+            init_red_state = np.zeros((7, 10, 9), dtype=np.float16)
+            init_black_state = np.zeros((7, 10, 9), dtype=np.float16)
+
+        # 为每方存储最近8步的状态
+        self.red_states = [init_red_state.copy() for _ in range(8)]
+        self.black_states = [init_black_state.copy() for _ in range(8)]
+
+    def update_states_history(self):
+        # 获取当前棋盘状态
+        red_state, black_state = decode_board(self.board)
+
+        # 更新状态历史
+        self.red_states.pop()
+        self.red_states.insert(0, red_state)
+        self.black_states.pop()
+        self.black_states.insert(0, black_state)
 
     # 可视化棋盘
     def graphic(self, board):
@@ -78,6 +103,9 @@ class Game(object):
             player_in_turn = players[self.board.turn]
             move = player_in_turn.get_action(self.board)
 
+            # 更新状态历史
+            self.update_states_history()
+
             # 执行移动
             self.board.push(move)
 
@@ -116,13 +144,9 @@ class Game(object):
         """
         # 初始化棋盘
         self.board = cchess.Board()
-        init_red_state, init_black_state = decode_board(self.board)
+        self.reset_states_history()
         mcts_probs, current_players = [], []
         move_count = 0
-
-        # 初始化状态缓存 - 为每方存储最近8步的状态
-        red_states = [init_red_state.copy() for _ in range(8)]
-        black_states = [init_black_state.copy() for _ in range(8)]
 
         # 开始自我对弈
         while True:
@@ -143,13 +167,9 @@ class Game(object):
                 )
 
             # 保存自我对弈的数据
-            red_state, black_state = decode_board(self.board)
             mcts_probs.append(move_probs)
             current_players.append(self.board.turn)
-            red_states.pop()
-            red_states.insert(0, red_state)
-            black_states.pop()
-            black_states.insert(0, black_state)
+            self.update_states_history()
 
             # 执行一步落子
             self.board.push(cchess.Move.from_uci(move_id2move_action[move]))
@@ -187,4 +207,4 @@ class Game(object):
                 player.reset_player()
 
                 # 返回游戏数据
-                return zip(red_states, black_states, mcts_probs, winner_z)
+                return zip(self.red_states, self.black_states, mcts_probs, winner_z)

@@ -134,33 +134,49 @@ class PolicyValueNet(object):
         return act_probs, value.detach().numpy()
 
     # 输入棋盘，返回每个合法动作的（动作，概率）元组列表，以及棋盘状态的分数
-    def policy_value_fn(self, board):
+    def policy_value_fn(self, board, red_states=None, black_states=None):
         self.policy_value_net.eval()
         # 获取合法动作列表
         legal_positions = [
             move_action2move_id[cchess.Move.uci(move)]
             for move in list(board.legal_moves)
         ]
-        current_state = decode_board(board)
-        current_state = np.ascontiguousarray(
-            current_state.reshape(-1, 15, 10, 9)
-        ).astype("float16")
+
+        # 如果没有提供历史状态，则从当前棋盘解码
+        if red_states is None or black_states is None:
+            red_state, black_state = decode_board(board)
+            red_states = [np.zeros((7, 10, 9), dtype=np.float16) for _ in range(7)] + [
+                red_state
+            ]
+            black_states = [
+                np.zeros((7, 10, 9), dtype=np.float16) for _ in range(7)
+            ] + [black_state]
+
+        # 添加走子方指示层
+        if board.turn == cchess.RED:
+            current_player = np.ones((1, 7, 10, 9), dtype=np.float16)
+        else:
+            current_player = np.zeros((1, 7, 10, 9), dtype=np.float16)
+        states = np.concatenate((red_states, black_states, current_player), axis=0)
+        current_states = np.ascontiguousarray(states.reshape(-1, 17, 7, 10, 9)).astype(
+            "float16"
+        )
         if self.stream is not None:
             with torch.cuda.stream(self.stream):
-                current_state = torch.as_tensor(current_state).to(
+                current_states = torch.as_tensor(current_states).to(
                     self.device, non_blocking=True
                 )
                 # 使用神经网络进行预测
                 with autocast(str(DEVICE)):
-                    log_act_probs, value = self.policy_value_net(current_state)
+                    log_act_probs, value = self.policy_value_net(current_states)
                 log_act_probs, value = log_act_probs.to(
                     "cpu", non_blocking=True
                 ), value.to("cpu", non_blocking=True)
             torch.cuda.current_stream().wait_stream(self.stream)
         else:
-            current_state = torch.as_tensor(current_state).to(self.device)
+            current_states = torch.as_tensor(current_states).to(self.device)
             with autocast(str(DEVICE)):
-                log_act_probs, value = self.policy_value_net(current_state)
+                log_act_probs, value = self.policy_value_net(current_states)
             log_act_probs, value = log_act_probs.cpu(), value.cpu()
         # 只取出合法动作
         act_probs = np.exp(log_act_probs.detach().numpy().astype("float16").flatten())

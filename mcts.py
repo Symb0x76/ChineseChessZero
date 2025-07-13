@@ -95,8 +95,10 @@ class MCTS(object):
         self.policy = policy_value_fn
         self.c_puct = c_puct
         self.n_playout = n_playout
+        self.red_history = None
+        self.black_history = None
 
-    def playout(self, board):
+    def playout(self, board, red_states=None, black_states=None):
         """
         从根节点开始进行一次模拟, 直到到达叶子节点, 并返回叶子节点的评估值
         """
@@ -104,12 +106,12 @@ class MCTS(object):
         while 1:
             if node.is_leaf():
                 break
-            # Greedily select next move.
+            # 贪婪选择下一步
             action, node = node.select(self.c_puct)
             board.push(cchess.Move.from_uci(move_id2move_action[action]))
 
         # 使用网络评估叶子节点，网络输出（动作，概率）元组p的列表以及当前玩家视角的得分[-1, 1]
-        action_probs, leaf_value = self.policy(board)
+        action_probs, leaf_value = self.policy(board, red_states, black_states)
         # 查看游戏是否结束
         end = board.is_game_over()
         if not end and not is_tie(board):
@@ -126,16 +128,18 @@ class MCTS(object):
         # 必须添加符号，因为两个玩家共用一个搜索树
         node.update_recursive(-leaf_value)
 
-    def get_move_probs(self, board, temp=1e-3):
+    def get_move_probs(self, board, temp=1e-3, red_states=None, black_states=None):
         """
         按顺序运行所有搜索并返回可用的动作及其相应的概率
 
         state: 当前棋盘状态
         temp: 控制动作概率的参数,当temp接近0时,选择概率最高的动作,当temp接近无穷大时,选择概率接近均匀分布的动作
         """
+        self.red_history = red_states
+        self.black_history = black_states
         for _ in range(self.n_playout):
             board_copy = board.copy()
-            self.playout(board_copy)
+            self.playout(board_copy, red_states=red_states, black_states=black_states)
 
         # 跟据根节点处的访问计数来计算移动概率
         act_visits = [(act, node.visits) for act, node in self.root.children.items()]

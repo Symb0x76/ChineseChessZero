@@ -71,59 +71,122 @@ def zip_array(array, data=0.0):
     返回:
         压缩后的列表
     """
-    rows, cols = array.shape
-    zip_res = [[rows, cols]]
+    array = np.array(array) if isinstance(array, list) else array  # 确保输入是numpy数组
+    depth, rows, cols = array.shape
+    zip_res = [[depth, rows, cols]]
 
-    for i in range(rows):
-        for j in range(cols):
-            if array[i, j] != data:
-                zip_res.append([i, j, array[i, j]])
+    for i in range(depth):
+        for j in range(rows):
+            for k in range(cols):
+                if array[i, j, k] != data:
+                    zip_res.append([i, j, k, array[i, j, k]])
 
     return zip_res  # 直接返回列表，不转换为numpy数组
 
 
 def recovery_array(array, data=0.0):
     """
-    从稀疏数组恢复为二维数组
+    从稀疏数组恢复为三维数组
 
     参数:
         array: 压缩后的列表或numpy数组
         data: 填充的默认值, 默认为0.
 
     返回:
-        恢复后的二维numpy数组
+        恢复后的三维numpy数组
     """
     # 将array转换为列表进行操作，确保兼容性
-    array_list = array.tolist() if isinstance(array, np.ndarray) else array
+    array = array.tolist() if isinstance(array, np.ndarray) else array
 
-    rows, cols = array_list[0]
-    recovery_res = np.full((int(rows), int(cols)), data)
+    depth, rows, cols = array[0]
+    recovery = np.full((int(depth), int(rows), int(cols)), data)
 
-    for i in range(1, len(array_list)):
-        row_idx = int(array_list[i][0])
-        col_idx = int(array_list[i][1])
-        recovery_res[row_idx, col_idx] = array_list[i][2]
+    for i in range(1, len(array)):
+        depth_idx = int(array[i][0])
+        row_idx = int(array[i][1])
+        col_idx = int(array[i][2])
+        recovery[depth_idx, row_idx, col_idx] = array[i][3]
 
-    return recovery_res
+    return recovery
 
 
-# (state, mcts_prob, winner) ((14,10,9),2086,1) => ((14,90),(2,1043),1)
-def zip_state_mcts_prob(tuple, half=True):
+"""
+# (state, mcts_prob, winner) ((7,10,9),2086,1) => ((7,90),(2,1043),1)
+def zip_state_mcts_prob(tuple):
     state, mcts_prob, winner = tuple
-    state = state.reshape((7 if half else 14, -1))
+    state = state.reshape((7, -1))
     mcts_prob = mcts_prob.reshape((2, -1))
     state = zip_array(state)
     mcts_prob = zip_array(mcts_prob)
     return state, mcts_prob, winner
 
 
-def recovery_state_mcts_prob(tuple, half=True):
+def recovery_state_mcts_prob(tuple):
     state, mcts_prob, winner = tuple
     state = recovery_array(state)
     mcts_prob = recovery_array(mcts_prob)
-    state = state.reshape((7 if half else 14, 10, 9))
+    state = state.reshape((7, 10, 9))
     mcts_prob = mcts_prob.reshape(2086)
     return state, mcts_prob, winner
+"""
+
+
+def zip_state(state):
+    """
+    将状态数组压缩为稀疏数组格式
+
+    参数:
+        state: 状态数组，形状为 (7, 10, 9)
+
+    返回:
+        压缩后的列表
+    """
+    state = state.reshape((7, -1))
+    return zip_array(state)
+
+
+def recovery_state(state):
+    """
+    从稀疏数组恢复为状态数组
+
+    参数:
+        state: 压缩后的列表或numpy数组
+
+    返回:
+        恢复后的状态数组，形状为 (7, 10, 9)
+    """
+    state = recovery_array(state)
+    state = state.reshape((7, 10, 9))
+    return state
+
+
+def zip_probs(mcts_prob):
+    """
+    将MCTS概率数组压缩为稀疏数组格式
+
+    参数:
+        mcts_prob: MCTS概率数组，形状为 (2086,)
+
+    返回:
+        压缩后的列表
+    """
+    mcts_prob = mcts_prob.reshape((2, -1))
+    return zip_array(mcts_prob)
+
+
+def recovery_probs(mcts_prob):
+    """
+    从稀疏数组恢复为MCTS概率数组
+
+    参数:
+        mcts_prob: 压缩后的列表或numpy数组
+
+    返回:
+        恢复后的MCTS概率数组，形状为 (2, 1043)
+    """
+    mcts_prob = recovery_array(mcts_prob)
+    mcts_prob = mcts_prob.reshape(2086)
+    return mcts_prob
 
 
 # 走子翻转的函数，用来扩充我们的数据
