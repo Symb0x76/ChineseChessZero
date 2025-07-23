@@ -10,6 +10,7 @@
 -   [ ] 实现网页人机对下互动 GUI
 -   [ ] 优化参数
 -   [ ] 使用 DataLoaders 优化数据加载
+-   [ ] 修改数据保存方式减小 data 大小
 
 ## 使用方法
 
@@ -35,7 +36,7 @@ pip install -r requirements.txt
 python collect.py
 ```
 
-可以添加参数`--show`来可视化对弈过程
+可以添加参数` --show`来可视化对弈过程
 
 6.  运行 train.py
 

@@ -2,8 +2,7 @@ import cchess
 import time
 import os
 import argparse
-import pickle
-import shelve
+import h5py
 import numpy as np
 from net import PolicyValueNet
 from mcts import MCTS_AI
@@ -13,8 +12,6 @@ from tools import (
     move_id2move_action,
     move_action2move_id,
     flip,
-    zip_state,
-    zip_probs,
 )
 
 """
@@ -41,8 +38,8 @@ class CollectPipeline:
         # 尝试从已有文件加载 iters
         if os.path.exists(DATA_PATH):
             try:
-                with shelve.open(DATA_PATH) as data_file:
-                    self.iters = data_file.get("iters", 0)
+                with h5py.File(DATA_PATH, "r") as h5f:
+                    self.iters = h5f.attrs.get("iters", 0)
                     print(
                         f"[{time.strftime('%H:%M:%S')}] 成功加载当前对局数: {self.iters}"
                     )
@@ -121,37 +118,48 @@ class CollectPipeline:
             data_flip.append((states_flip, mcts_prob_flip, winner))
         return data + data_flip
 
-    def compress(self, data):
-        """将预处理后的对局数据压缩为稀疏数组格式
-
-        Args:
-            data (numpy.ndarray): 预处理后的对局数据
-
-        Returns:
-            压缩后的稀疏数组
-        """
-        # 压缩数据
-        compressed_data = []
-        for states, mcts_probs, winner in data:
-            compressed_data.append((zip_state(states), zip_probs(mcts_probs), winner))
-        return compressed_data
-
     def collect_data(self, is_shown=False):
         """收集自我对弈的数据"""
         self.load_model()  # 从本体处加载最新模型
         play_data = self.game.start_self_play(self.mcts_ai, is_shown=is_shown)
         play_data = self.preprocess(play_data)  # 预处理数据
         play_data = self.flip_data(play_data)  # 翻转数据
-        play_data = self.compress(play_data)  # 压缩数据
-        self.iters += 1  # 更新迭代次数
 
         try:
-            with shelve.open(DATA_PATH) as data_file:
-                data_file["data_" + str(self.iters)] = play_data
-            print(f"[{time.strftime('%H:%M:%S')}] 成功保存数据到 {DATA_PATH}")
-            del play_data  # 释放内存
+            # 创建 HDF5 文件并直接保存数据
+            with h5py.File(DATA_PATH, "a") as h5f:
+                # 获取当前游戏索引
+                current_iter = h5f.attrs.get("iters", 0)
+
+                # 创建游戏组
+                game_group = h5f.create_group(f"game_{current_iter}")
+
+                # 创建数据集 - 直接使用gzip压缩
+                game_group.create_dataset(
+                    "states",
+                    data=[state for state, _, _ in play_data],
+                    compression="gzip",
+                )
+                game_group.create_dataset(
+                    "mcts_probs",
+                    data=[prob for _, prob, _ in play_data],
+                    compression="gzip",
+                )
+                game_group.create_dataset(
+                    "winners", data=[winner for _, _, winner in play_data]
+                )
+
+                # 更新游戏索引
+                h5f.attrs["iters"] = current_iter + 1
+                self.iters = current_iter + 1  # 更新实例中的迭代次数
+
+                print(f"[{time.strftime('%H:%M:%S')}] 成功保存数据到 {DATA_PATH}")
+
+            # 释放内存
+            del play_data
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] 保存数据失败: {str(e)}")
+
         return self.iters
 
     def run(self, is_shown=False):

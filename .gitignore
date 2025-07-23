@@ -2,7 +2,9 @@ __pycache__
 .vscode
 python-chinese-chess
 models
-data
+data.h5
 current_policy.pkl
 mcts_pure.py
-test.ipynb
+flat2horizon.py
+shelve2hdf.py
+test.py

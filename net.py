@@ -138,7 +138,10 @@ class PolicyValueNet(object):
     # 输入一个批次的状态，输出一个批次的动作概率和状态价值
     def policy_value(self, state_batch):
         self.policy_value_net.eval()
-        state_batch = torch.tensor(state_batch).to(self.device)
+        if isinstance(state_batch, torch.Tensor):
+            state_batch = state_batch.to(self.device)
+        else:
+            state_batch = torch.tensor(state_batch, dtype=torch.float).to(self.device)
         log_act_probs, value = self.policy_value_net(state_batch)
         log_act_probs, value = log_act_probs.cpu(), value.cpu()
         act_probs = np.exp(log_act_probs.detach().numpy())
@@ -174,9 +177,9 @@ class PolicyValueNet(object):
         )
         if self.stream is not None:
             with torch.cuda.stream(self.stream):
-                current_states = torch.as_tensor(current_states).to(
-                    self.device, non_blocking=True
-                )
+                current_states = torch.as_tensor(
+                    current_states, dtype=torch.float16
+                ).to(self.device, non_blocking=True)
                 # 使用神经网络进行预测
                 with autocast(str(DEVICE)):
                     log_act_probs, value = self.policy_value_net(current_states)
@@ -185,7 +188,9 @@ class PolicyValueNet(object):
                 ), value.to("cpu", non_blocking=True)
             torch.cuda.current_stream().wait_stream(self.stream)
         else:
-            current_states = torch.as_tensor(current_states).to(self.device)
+            current_states = torch.as_tensor(current_states, dtype=torch.float16).to(
+                self.device
+            )
             with autocast(str(DEVICE)):
                 log_act_probs, value = self.policy_value_net(current_states)
             log_act_probs, value = log_act_probs.cpu(), value.cpu()
@@ -203,9 +208,22 @@ class PolicyValueNet(object):
     def train_step(self, state_batch, mcts_probs, winner_batch, lr=0.002):
         self.policy_value_net.train()
         # 包装变量
-        state_batch = torch.tensor(state_batch).to(self.device)
-        mcts_probs = torch.tensor(mcts_probs).to(self.device)
-        winner_batch = torch.tensor(winner_batch).to(self.device)
+        if isinstance(state_batch, torch.Tensor):
+            state_batch = state_batch.to(self.device)
+        else:
+            state_batch = torch.as_tensor(state_batch, dtype=torch.float).to(
+                self.device
+            )
+        if isinstance(mcts_probs, torch.Tensor):
+            mcts_probs = mcts_probs.to(self.device)
+        else:
+            mcts_probs = torch.as_tensor(mcts_probs, dtype=torch.float).to(self.device)
+        if isinstance(winner_batch, torch.Tensor):
+            winner_batch = winner_batch.to(self.device)
+        else:
+            winner_batch = torch.as_tensor(winner_batch, dtype=torch.float).to(
+                self.device
+            )
         # 清零梯度
         self.optimizer.zero_grad()
         # 设置学习率
