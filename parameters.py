@@ -11,20 +11,20 @@ EPS = 0.25
 # Dirichlet噪声的α参数，表示添加噪声的分布的形状
 ALPHA = 0.2
 # 每次移动的模拟次数
-PLAYOUT = 1200
+PLAYOUT = 1600
 # 模型地址
 MODEL_PATH = "current_policy.pkl"
 # 训练数据容器地址
 DATA_PATH = "data.h5"
+# 转换后的训练数据容器地址
+PICKLE_PATH = "data.pkl"
 # 训练数据批次大小
-BATCH_SIZE = 128  # windows下约占用15G显存
+BATCH_SIZE = 2048
 # 训练轮数
 EPOCHS = 10
 # 训练更新间隔时间
 UPDATE_INTERVAL = 1
 # kl散度控制
 KL_TARG = 0.02
-# 训练更新的次数
-GAME_BATCH_NUM = 3000
 # 保存模型的频率
 CHECK_FREQ = 10
