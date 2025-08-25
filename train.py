@@ -26,43 +26,34 @@ from parameters import (
 class ChessDataset(Dataset):
     """象棋对弈数据集类 (HDF5 版本)"""
 
-    def __init__(self, data_path, max_items=None):
+    def __init__(self, data_path, max_items=None, cache_size=500):
         self.data_path = data_path
         self.max_items = max_items
+        self.cache_size = cache_size
+        self.cache = {}  # 用于缓存最近访问的数据
 
         # 计算数据集大小和创建索引映射
         self.game_indices = []
         self.total_moves = 0
 
-        # 临时打开文件获取元数据
+        # 不在这里打开 h5py 文件
         with h5py.File(data_path, "r") as h5f:
-            # 获取游戏数量
             games_count = h5f.attrs.get("iters", 0)
             print(f"[{time.strftime('%H:%M:%S')}] 数据集中共有 {games_count} 局游戏")
-
-            # 遍历所有游戏，计算总步数
             for game_idx in range(games_count):
                 game_group = h5f.get(f"game_{game_idx}")
-                if game_group is not None:
-                    # 通过状态数据集的第一维获取步数，而不是通过属性
-                    if "states" in game_group:
-                        steps = game_group["states"].shape[0]
-                        # 为每一步创建索引映射 (游戏索引, 步骤索引)
-                        for step_idx in range(steps):
-                            self.game_indices.append((game_idx, step_idx))
-                        self.total_moves += steps
-                    else:
-                        print(
-                            f"[{time.strftime('%H:%M:%S')}] 警告: game_{game_idx} 缺少states数据集"
-                        )
-
-            # 如果设置了最大项目数，限制大小
+                if game_group is not None and "states" in game_group:
+                    steps = game_group["states"].shape[0]
+                    for step_idx in range(steps):
+                        self.game_indices.append((game_idx, step_idx))
+                    self.total_moves += steps
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] 警告: game_{game_idx} 缺少states数据集")
             if max_items and max_items < len(self.game_indices):
                 self.game_indices = self.game_indices[:max_items]
                 print(f"[{time.strftime('%H:%M:%S')}] 限制数据集大小为 {max_items} 条")
-
-            self.length = len(self.game_indices)
-            print(f"[{time.strftime('%H:%M:%S')}] 数据集总共包含 {self.length} 步棋")
+        self.length = len(self.game_indices)
+        print(f"[{time.strftime('%H:%M:%S')}] 数据集总共包含 {self.length} 步棋")
 
     def __len__(self):
         return self.length
@@ -75,17 +66,39 @@ class ChessDataset(Dataset):
         # 获取游戏索引和步骤索引
         game_idx, step_idx = self.game_indices[idx]
 
-        # 每次获取数据时打开和关闭文件
+        # 每次访问都打开文件（h5py本身支持并发读取）
         with h5py.File(self.data_path, "r") as h5f:
-            # 获取对应游戏组
             game_group = h5f[f"game_{game_idx}"]
-
-            # 从游戏组中读取数据
             state = game_group["states"][step_idx]
             mcts_prob = game_group["mcts_probs"][step_idx]
             winner = game_group["winners"][step_idx]
+        return (state, mcts_prob, winner)
+    '''
+        # 检查缓存中是否有数据
+        cache_key = (game_idx, step_idx)
+        if cache_key in self.cache:
+            return self.cache[cache_key]
 
-            return state, mcts_prob, winner
+        # 从文件中读取数据
+        game_group = self.h5f[f"game_{game_idx}"]
+        state = game_group["states"][step_idx]
+        mcts_prob = game_group["mcts_probs"][step_idx]
+        winner = game_group["winners"][step_idx]
+
+        # 将数据存入缓存
+        result = (state, mcts_prob, winner)
+        if len(self.cache) >= self.cache_size:
+            # 简单的FIFO缓存策略，移除最早加入的项
+            self.cache.pop(next(iter(self.cache)))
+        self.cache[cache_key] = result
+
+        return result
+'''
+
+    def __del__(self):
+        # 确保文件句柄被关闭
+        if hasattr(self, "h5f") and self.h5f is not None:
+            self.h5f.close()
 
 
 class TrainPipeline:
@@ -139,7 +152,7 @@ class TrainPipeline:
                 self.dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
-                num_workers=4,
+                num_workers=8,
                 pin_memory=True,
             )
 
@@ -365,7 +378,7 @@ class TrainPipeline:
                                 self.dataset,
                                 self.batch_size,
                                 shuffle=True,
-                                num_workers=4,
+                                num_workers=8,
                                 pin_memory=True,
                             )
                         else:
@@ -378,7 +391,7 @@ class TrainPipeline:
                                     self.dataset,
                                     self.batch_size,
                                     shuffle=True,
-                                    num_workers=4,
+                                    num_workers=8,
                                     pin_memory=True,
                                 )
                                 self.data_iters = current_data_iters
@@ -431,6 +444,10 @@ class TrainPipeline:
         except KeyboardInterrupt:
             print(f"\r[{time.strftime('%H:%M:%S')}] 保存训练状态并退出")
             self.save_train_state()
+            # 确保文件句柄被关闭
+            if hasattr(self, "dataset") and self.dataset is not None:
+                if hasattr(self.dataset, "h5f") and self.dataset.h5f is not None:
+                    self.dataset.h5f.close()
 
 
 if __name__ == "__main__":
