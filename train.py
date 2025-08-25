@@ -36,8 +36,9 @@ class TrainPipeline:
         self.epochs = EPOCHS  # 每次训练的轮数
         self.kl_targ = KL_TARG  # kl散度控制
         self.check_freq = CHECK_FREQ  # 保存模型的频率
-        self.best_win_ratio = 0.0
-        self.pure_mcts_playout_num = 500
+        # TODO: Add Revalue & Retrain
+        # self.best_win_ratio = 0.0
+        # self.pure_mcts_playout_num = 500
         self.train_iters = 0  # 训练迭代计数
         self.data_iters = 0  # 数据收集迭代计数
         self.dataset = None  # 数据集
