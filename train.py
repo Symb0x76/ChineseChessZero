@@ -234,11 +234,13 @@ class TrainPipeline:
         )
         return avg_loss, avg_entropy
 
+    '''
     def policy_evaluate(self):
         """评估当前策略的胜率（暂时返回一个模拟值）"""
         # 这里应该实现实际的策略评估逻辑
         # 暂时返回一个模拟的胜率值
         return 0.6
+        '''
 
     def save_train_state(self):
         """保存训练状态到 pickle 文件"""
@@ -300,7 +302,7 @@ class TrainPipeline:
                         self.dataset,
                         self.batch_size,
                         shuffle=True,
-                        num_workers=0,  # Windows下避免多进程pickle报错
+                        num_workers=0,
                         pin_memory=True,
                     )
                     print(f"[{time.strftime('%H:%M:%S')}] 数据集加载完成，共 {len(self.dataset)} 个样本")
@@ -312,6 +314,18 @@ class TrainPipeline:
                     self.train_iters += 1
                     self.save_train_state()
                     if self.train_iters % self.check_freq == 0:
+                        # win_ratio = self.policy_evaluate()
+                        # print("current self-play batch: {},win_ratio: {}".format(i + 1, win_ratio))
+                        # self.policy_value_net.save_model('./current_policy.model')
+                        # if win_ratio > self.best_win_ratio:
+                        #     print(f"[{time.strftime('%H:%M:%S')}] New best policy!!!!!!!!")
+                        #     self.best_win_ratio = win_ratio
+                        #     # update the best_policy
+                        #     self.policy_value_net.save_model('./best_policy.model')
+                        #     if (self.best_win_ratio == 1.0 and
+                        #             self.pure_mcts_playout_num < 5000):
+                        #         self.pure_mcts_playout_num += 1000
+                        #         self.best_win_ratio = 0.0
                         print(
                             f"[{time.strftime('%H:%M:%S')}] 保存检查点: 训练迭代 {self.train_iters}"
                         )
