@@ -2,10 +2,11 @@ import pickle
 from torch.utils.data import Dataset
 import time
 
+
 class PickleDataset(Dataset):
     """基于pickle的象棋数据集类（优化版）"""
 
-    def __init__(self, pkl_path="data_optimized.pkl", max_items=None):
+    def __init__(self, pkl_path="data.pkl", max_items=None):
         print(f"[{time.strftime('%H:%M:%S')}] 开始加载 {pkl_path}...")
 
         # 加载pickle数据
@@ -13,10 +14,10 @@ class PickleDataset(Dataset):
             data_dict = pickle.load(f)
 
         # 获取数组引用（避免复制）
-        self.states = data_dict['states']
-        self.mcts_probs = data_dict['mcts_probs']
-        self.winners = data_dict['winners']
-        self.length = data_dict['total_count']
+        self.states = data_dict["states"]
+        self.mcts_probs = data_dict["mcts_probs"]
+        self.winners = data_dict["winners"]
+        self.length = data_dict["total_count"]
 
         # 限制数据量（如果指定）
         if max_items and max_items < self.length:
@@ -24,10 +25,10 @@ class PickleDataset(Dataset):
             print(f"[{time.strftime('%H:%M:%S')}] 限制数据集大小为 {max_items} 条")
 
         print(f"[{time.strftime('%H:%M:%S')}] 数据加载完成，总共 {self.length} 步棋")
-        #print(f"数据格式:")
-        #print(f"  - state shape: {self.states.shape}")
-        #print(f"  - mcts_prob shape: {self.mcts_probs.shape}")
-        #print(f"  - winner shape: {self.winners.shape}")
+        # print(f"数据格式:")
+        # print(f"  - state shape: {self.states.shape}")
+        # print(f"  - mcts_prob shape: {self.mcts_probs.shape}")
+        # print(f"  - winner shape: {self.winners.shape}")
 
     def __len__(self):
         return self.length
@@ -41,6 +42,7 @@ class PickleDataset(Dataset):
         mcts_prob = self.mcts_probs[idx]
         winner = self.winners[idx]
         return (state, mcts_prob, winner)
+
 
 # 测试代码
 if __name__ == "__main__":
@@ -61,13 +63,15 @@ if __name__ == "__main__":
     print(f"\n测试单进程DataLoader速度...")
     start_time = time.time()
 
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=0, pin_memory=False)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, pin_memory=False)
 
     batch_count = 0
     for i, (states, mcts_probs, winners) in enumerate(dataloader):
         batch_count += 1
         if i == 0:  # 只打印第一个批次的信息
-            print(f"批次 {i}: states={states.shape}, mcts_probs={mcts_probs.shape}, winners={winners.shape}")
+            print(
+                f"批次 {i}: states={states.shape}, mcts_probs={mcts_probs.shape}, winners={winners.shape}"
+            )
         if i >= 100:  # 测试前100个批次
             break
 

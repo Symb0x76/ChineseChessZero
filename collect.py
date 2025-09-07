@@ -28,7 +28,7 @@ class CollectPipeline:
         self.board = cchess.Board()
         self.game = Game(self.board)
         # 对弈参数
-        self.temp = 1  # 温度
+        self.temp = 1.0  # 温度
         self.n_playout = PLAYOUT  # 每次移动的模拟次数
         self.c_puct = C_PUCT
         self.init_model = init_model  # 初始化模型路径
@@ -92,6 +92,23 @@ class CollectPipeline:
             # 确保mcts_prob是NumPy数组
             if not isinstance(mcts_prob, np.ndarray):
                 mcts_prob = np.array(mcts_prob)
+
+            # 验证和修复概率分布
+            prob_sum = np.sum(mcts_prob)
+            if prob_sum <= 0:
+                print(f"[警告] mcts_prob 概率和为 {prob_sum}，跳过此步")
+                continue
+            elif abs(prob_sum - 1.0) > 1e-6:
+                print(f"[信息] mcts_prob 概率和为 {prob_sum:.6f}，进行归一化")
+                mcts_prob = mcts_prob / prob_sum
+
+            # 验证概率分布是否过于集中（类似one-hot）
+            max_prob = np.max(mcts_prob)
+            non_zero_count = np.sum(mcts_prob > 1e-8)
+            if max_prob > 0.99 and non_zero_count <= 3:
+                print(
+                    f"[警告] mcts_prob 过于集中: max={max_prob:.4f}, 非零元素={non_zero_count}"
+                )
 
             # 堆叠出完整数据
             processed_data.append((states, mcts_prob, winner))

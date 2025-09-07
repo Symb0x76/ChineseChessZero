@@ -131,7 +131,7 @@ class Game(object):
                 return winner
 
     # 使用蒙特卡洛树搜索开始自我对弈，存储游戏状态（状态，蒙特卡洛落子概率，胜负手）三元组用于神经网络训练
-    def start_self_play(self, player, is_shown=False, temp=1e-3):
+    def start_self_play(self, player, is_shown=False, temp=1.0):
         """
         开始自我对弈，用于收集训练数据
 
@@ -141,7 +141,7 @@ class Game(object):
             temp: 温度参数，控制探索度
 
         Returns:
-            TODO
+            训练数据列表
         """
         # 初始化棋盘
         self.board = cchess.Board()
@@ -153,8 +153,11 @@ class Game(object):
         while True:
             move_count += 1
 
+            # 动态调整温度：前30步使用较高温度增加探索，后续降低
+            current_temp = temp if move_count <= 30 else max(0.1, temp * 0.5)
+
             # 每20步输出一次耗时
-            if move_count % 20 == 0:
+            if move_count % 10 == 0:
                 start_time = time.time()
                 move, move_probs = player.get_action(
                     self.board, temp=temp, return_prob=True
@@ -166,6 +169,14 @@ class Game(object):
                 move, move_probs = player.get_action(
                     self.board, temp=temp, return_prob=True
                 )
+
+            # 验证概率分布
+            prob_sum = np.sum(move_probs)
+            if prob_sum > 0:
+                move_probs = move_probs / prob_sum  # 归一化确保概率和为1
+            else:
+                print(f"[警告] move_probs 全为0，步数: {move_count}")
+                continue
 
             # 保存自我对弈的数据
             mcts_probs.append(move_probs)
