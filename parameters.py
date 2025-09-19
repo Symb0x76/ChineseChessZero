@@ -12,18 +12,14 @@ EPS = 0.25
 ALPHA = 0.2
 # 每次移动的模拟次数
 PLAYOUT = 1600
-# 模型地址
-MODEL_PATH = "current_policy.pkl"
-# 训练数据容器地址
-DATA_PATH = "data.h5"
-# 转换后的训练数据容器地址
-PICKLE_PATH = "data.pkl"
+# 数据目录（训练过程中产生的所有数据文件）
+DATA_DIR = "data"
+# 模型目录（训练产生与加载的模型文件）
+MODEL_DIR = "models"
 # 训练数据批次大小
-BATCH_SIZE = 2048
+BATCH_SIZE = 1024
 # 训练轮数
 EPOCHS = 10
-# 训练更新间隔时间
-UPDATE_INTERVAL = 1
 # kl散度控制
 KL_TARG = 0.02
 # 保存模型的频率

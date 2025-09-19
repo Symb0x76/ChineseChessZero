@@ -1,82 +1,52 @@
-import pickle
+import os
+import numpy as np
 from torch.utils.data import Dataset
-import time
 
 
-class PickleDataset(Dataset):
-    """基于pickle的象棋数据集类（优化版）"""
+class NpyMemmapDataset(Dataset):
+    """
+    基于三个 .npy (.npy + 内存映射) 的象棋数据集：
+    - 目录模式（推荐，与 convert.py 一致）：
+        states.npy, mcts.npy, winners.npy
+    - 兼容旧模式（stem 前缀）：
+        <stem>_states.npy, <stem>_mcts.npy, <stem>_winners.npy
 
-    def __init__(self, pkl_path="data.pkl", max_items=None):
-        print(f"[{time.strftime('%H:%M:%S')}] 开始加载 {pkl_path}...")
+    仅按索引切片，从磁盘内存映射读取，几乎不占额外内存。
+    """
 
-        # 加载pickle数据
-        with open(pkl_path, "rb") as f:
-            data_dict = pickle.load(f)
+    def __init__(self, path: str):
+        # 目录模式
+        if os.path.isdir(path):
+            states_path = os.path.join(path, "states.npy")
+            mcts_path = os.path.join(path, "mcts.npy")
+            winners_path = os.path.join(path, "winners.npy")
+        else:
+            base = os.path.splitext(path)[0]
+            states_path = f"{base}_states.npy"
+            mcts_path = f"{base}_mcts.npy"
+            winners_path = f"{base}_winners.npy"
 
-        # 获取数组引用（避免复制）
-        self.states = data_dict["states"]
-        self.mcts_probs = data_dict["mcts_probs"]
-        self.winners = data_dict["winners"]
-        self.length = data_dict["total_count"]
+        if not (os.path.exists(states_path) and os.path.exists(mcts_path) and os.path.exists(winners_path)):
+            raise FileNotFoundError(
+                "未找到 .npy 数据文件，请先运行 convert.py 生成：\n"
+                f"  - {states_path}\n  - {mcts_path}\n  - {winners_path}"
+            )
 
-        # 限制数据量（如果指定）
-        if max_items and max_items < self.length:
-            self.length = max_items
-            print(f"[{time.strftime('%H:%M:%S')}] 限制数据集大小为 {max_items} 条")
+        self.states = np.load(states_path, mmap_mode="r")
+        self.mcts = np.load(mcts_path, mmap_mode="r")
+        self.winners = np.load(winners_path, mmap_mode="r")
 
-        print(f"[{time.strftime('%H:%M:%S')}] 数据加载完成，总共 {self.length} 步棋")
-        # print(f"数据格式:")
-        # print(f"  - state shape: {self.states.shape}")
-        # print(f"  - mcts_prob shape: {self.mcts_probs.shape}")
-        # print(f"  - winner shape: {self.winners.shape}")
+        if not (len(self.states) == len(self.mcts) == len(self.winners)):
+            raise ValueError(
+                f"数据长度不一致: states={len(self.states)}, mcts={len(self.mcts)}, winners={len(self.winners)}"
+            )
+        self.length = len(self.states)
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx):
-        if idx < 0 or idx >= self.length:
-            raise IndexError(f"索引 {idx} 超出范围 (0-{self.length-1})")
-
-        # 直接从numpy数组中获取数据（速度快）
         state = self.states[idx]
-        mcts_prob = self.mcts_probs[idx]
+        mcts_prob = self.mcts[idx]
         winner = self.winners[idx]
-        return (state, mcts_prob, winner)
-
-
-# 测试代码
-if __name__ == "__main__":
-    # 测试数据集
-    dataset = PickleDataset("data_optimized.pkl")
-    print(f"\n数据集长度: {len(dataset)}")
-
-    # 测试第一个数据
-    state, mcts_prob, winner = dataset[0]
-    print(f"第一个样本:")
-    print(f"  - state type: {type(state)}, shape: {state.shape}")
-    print(f"  - mcts_prob type: {type(mcts_prob)}, shape: {mcts_prob.shape}")
-    print(f"  - winner: {winner}")
-
-    # 测试DataLoader兼容性和速度
-    from torch.utils.data import DataLoader
-
-    print(f"\n测试单进程DataLoader速度...")
-    start_time = time.time()
-
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, pin_memory=False)
-
-    batch_count = 0
-    for i, (states, mcts_probs, winners) in enumerate(dataloader):
-        batch_count += 1
-        if i == 0:  # 只打印第一个批次的信息
-            print(
-                f"批次 {i}: states={states.shape}, mcts_probs={mcts_probs.shape}, winners={winners.shape}"
-            )
-        if i >= 100:  # 测试前100个批次
-            break
-
-    elapsed_time = time.time() - start_time
-    print(f"处理了 {batch_count} 个批次，用时 {elapsed_time:.2f}秒")
-    print(f"平均每批次用时: {elapsed_time/batch_count*1000:.2f}ms")
-
-    print("测试完成!")
+        return state, mcts_prob, winner

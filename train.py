@@ -4,13 +4,14 @@ import torch
 import time
 import os
 import argparse
+import sys
 import numpy as np
 import copy
 from game import Game
 from net import PolicyValueNet
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
-from dataset import PickleDataset
+from dataset import NpyMemmapDataset
 from parameters import (
     PLAYOUT,
     C_PUCT,
@@ -18,16 +19,16 @@ from parameters import (
     EPOCHS,
     KL_TARG,
     UPDATE_INTERVAL,
-    PICKLE_PATH,
-    MODEL_PATH,
     CHECK_FREQ,
+    DATA_DIR,
+    MODEL_DIR,
 )
+from tools import log, get_logger
 
 
 class TrainPipeline:
-    def __init__(self, init_model: str | None = None, debug: bool = False):
+    def __init__(self, init_model: str | None = None):
         """初始化训练流水线"""
-        self.debug = debug
         # 基础参数
         self.board = cchess.Board()
         self.game = Game(self.board)
@@ -48,27 +49,28 @@ class TrainPipeline:
         self.data_iters = 0
         self.dataset = None
         self.dataloader = None
-        self.pickle_path = PICKLE_PATH
+        # 训练数据目录（与 convert.py 一致：states.npy/mcts.npy/winners.npy）
+        self.data_dir = DATA_DIR
+        # 当前模型路径由 MODEL_DIR 推导
+        self.current_policy_path = os.path.join(MODEL_DIR, "current_policy.pkl")
 
         # 模型
         if init_model:
             try:
-                self.policy_value_net = PolicyValueNet(model_file=init_model)
-                print(f"[{time.strftime('%H:%M:%S')}] 已加载模型: {init_model}")
+                self.policy_value_net = PolicyValueNet(model=init_model)
+                log(f"Loaded model: {init_model}")
             except Exception as e:
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 模型 {init_model} 加载失败: {e}，从零开始训练"
-                )
+                log(f"Failed to load model {init_model}: {e}. Start training from scratch", level="WARNING")
                 self.policy_value_net = PolicyValueNet()
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] 从零开始训练")
+            log("Start training blankly")
             self.policy_value_net = PolicyValueNet()
 
     def policy_update(self):
-        """执行一次策略/价值网络的参数更新，并返回平均 loss 和 entropy"""
+        """Run one policy/value update step and return avg loss and entropy"""
         device = self.policy_value_net.device
         if not hasattr(self, "_device_printed"):
-            print(f"[{time.strftime('%H:%M:%S')}] 训练设备: {device}")
+            log(f"Device: {device}")
             self._device_printed = True
 
         use_cuda = torch.cuda.is_available()
@@ -78,19 +80,30 @@ class TrainPipeline:
 
         # DataLoader 准备
         if self.dataloader is None:
-            print(
-                f"[{time.strftime('%H:%M:%S')}] 加载 pickle 数据集: {self.pickle_path}"
-            )
-            self.dataset = PickleDataset(self.pickle_path)
+            # collate_fn: stack NumPy arrays then copy into writable tensors
+            def npy_collate(batch):
+                states, mcts, winners = zip(*batch)
+                states = torch.tensor(np.stack(states), dtype=torch.float32)
+                mcts = torch.tensor(np.stack(mcts), dtype=torch.float32)
+                winners = torch.tensor(np.array(winners), dtype=torch.float32)
+                return states, mcts, winners
+
+            log(f"Loading .npy dataset from: {self.data_dir}")
+            states_path = os.path.join(self.data_dir, "states.npy")
+            if not os.path.exists(states_path):
+                log(f"Not found: {states_path}", level="ERROR")
+                log("Please run convert.py to generate .npy data", level="ERROR")
+                raise FileNotFoundError(states_path)
+            self.dataset = NpyMemmapDataset(self.data_dir)
+            # 在 CUDA 上启用 pin_memory 能提升 H2D 传输性能
             self.dataloader = DataLoader(
                 self.dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
-                pin_memory=True,
+                pin_memory=use_cuda,
+                collate_fn=npy_collate,
             )
-            print(
-                f"[{time.strftime('%H:%M:%S')}] 数据集加载完成，共 {len(self.dataset)} 个样本"
-            )
+            log(f"Dataset loaded: {len(self.dataset)} samples")
 
         # 累计器
         total_loss = total_entropy = 0.0
@@ -115,7 +128,7 @@ class TrainPipeline:
                 if torch.isnan(mcts_probs_batch).any():
                     raise ValueError("mcts_probs_batch contains NaN")
 
-                # 设置学习率
+                # 设置学习率（可动态调整）
                 current_lr = self.learning_rate * self.lr_multiplier
                 for g in self.policy_value_net.optimizer.param_groups:
                     g["lr"] = current_lr
@@ -198,14 +211,12 @@ class TrainPipeline:
                     self.policy_value_net.optimizer.load_state_dict(backup_opt_state)
                     old_mult = self.lr_multiplier
                     self.lr_multiplier = max(0.05, self.lr_multiplier / 2)
-                    if self.debug:
-                        print(
-                            f"[DEBUG] 数值异常回滚 batch={batch_idx} lr_mult {old_mult:.4f}->{self.lr_multiplier:.4f}"
-                        )
                     continue
 
                 # 新策略 (for KL)
                 new_probs, new_v = self.policy_value_net.policy_value(state_batch)
+                # policy_value 会将模型切到 eval，这里切回 train，避免对后续训练步骤造成影响
+                self.policy_value_net.policy_value_net.train()
                 last_old_v, last_new_v, last_winner_batch = old_v, new_v, winner_batch
 
                 # winners 分布累计
@@ -252,47 +263,13 @@ class TrainPipeline:
                         )
                         old_multiplier = self.lr_multiplier
                         self.lr_multiplier = max(0.1, self.lr_multiplier / 2)
-                        if self.debug:
-                            print(
-                                f"[DEBUG] 熵塌陷回滚 batch={batch_idx} entropy={entropy:.4f} targets_avg_nz={non_zero_targets:.2f} lr_mult {old_multiplier:.4f}->{self.lr_multiplier:.4f}"
-                            )
                         continue  # 不计入统计
 
-                if self.debug and batch_idx < 3:
-                    with torch.no_grad():
-                        probs_preview = torch.exp(log_act_probs[0].detach().cpu())[
-                            :20
-                        ].numpy()
-                        mcts_preview = mcts_probs_batch[0].detach().cpu().numpy()[:20]
-                        policy_full = torch.exp(log_act_probs[0].detach().cpu())
-                        mcts_full = mcts_probs_batch[0].detach().cpu()
-                        k1 = min(10, policy_full.numel())
-                        k2 = min(10, mcts_full.numel())
-                        pkv, pki = torch.topk(policy_full, k1)
-                        mkv, mki = torch.topk(mcts_full, k2)
-                    print(
-                        f"[DEBUG] epoch={epoch} batch={batch_idx} lr={current_lr:.6g} total={l:.4f} policy={policy_loss.item():.4f} value={value_loss.item():.4f} entropy={entropy:.4f} kl={last_kl:.6f}"
-                    )
-                    print(
-                        f"[DEBUG] probs[:20]={np.array2string(probs_preview, precision=3, suppress_small=True)}"
-                    )
-                    print(
-                        f"[DEBUG] mcts [:20]={np.array2string(mcts_preview, precision=3, suppress_small=True)}"
-                    )
-                    print(
-                        f"[DEBUG] policy top{k1} idx={pki.tolist()} val={pkv.tolist()}"
-                    )
-                    print(f"[DEBUG] mcts top{k2} idx={mki.tolist()} val={mkv.tolist()}")
                 if last_kl > self.kl_targ * 4:
                     # 高 KL: 降低 lr_multiplier 并继续，不整轮早停
                     old_multiplier = self.lr_multiplier
                     self.lr_multiplier = max(0.05, self.lr_multiplier / 1.5)
-                    if self.debug:
-                        print(
-                            f"[DEBUG] 高 KL 调整: kl={last_kl:.6f} > {self.kl_targ*4:.6f}, lr_multiplier {old_multiplier:.4f} -> {self.lr_multiplier:.4f}"
-                        )
-                    if self.debug:
-                        print(f"[DEBUG] 保持训练，未早停")
+                    # 保持训练，未早停
 
             # 汇总 epoch
             total_loss += epoch_loss
@@ -330,19 +307,19 @@ class TrainPipeline:
         else:
             explained_var_old = explained_var_new = 0.0
 
-        print(
-            f"[{time.strftime('%H:%M:%S')}] kl:{last_kl:.9f},lr_multiplier:{self.lr_multiplier:.6f},"
+        log(
+            f"kl:{last_kl:.9f},lr_multiplier:{self.lr_multiplier:.6f},"
             f"loss:{avg_loss:.6f},policy_loss:{avg_policy_loss:.6f},value_loss:{avg_value_loss:.6f},"
             f"entropy:{avg_entropy:.6f},explained_var_old:{explained_var_old:.6f},explained_var_new:{explained_var_new:.6f}"
         )
 
         total_w = win_neg + win_zero + win_pos
         if total_w > 0:
-            print(
-                f"[{time.strftime('%H:%M:%S')}] winners 分布: total={total_w} -1:{win_neg} ({win_neg/total_w:.2%}) 0:{win_zero} ({win_zero/total_w:.2%}) 1:{win_pos} ({win_pos/total_w:.2%})"
+            log(
+                f"Winners distribution: total={total_w} -1:{win_neg} ({win_neg/total_w:.2%}) 0:{win_zero} ({win_zero/total_w:.2%}) 1:{win_pos} ({win_pos/total_w:.2%})"
             )
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] winners 分布: 无数据")
+            log("Winners distribution: no data", level="WARNING")
         return avg_loss, avg_entropy
 
     '''
@@ -354,8 +331,9 @@ class TrainPipeline:
         '''
 
     def save_train_state(self):
-        """保存训练状态到 pickle 文件"""
-        train_state_path = "train_state.pkl"
+        """Save training state to a pickle file"""
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        train_state_path = os.path.join(MODEL_DIR, "train_state.pkl")
         state = {
             "train_iters": self.train_iters,
             "data_iters": self.data_iters,
@@ -365,11 +343,11 @@ class TrainPipeline:
             with open(train_state_path, "wb") as f:
                 pickle.dump(state, f)
         except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] 保存训练状态失败: {str(e)}")
+            log(f"Failed to save training state: {str(e)}", level="ERROR")
 
     def load_train_state(self):
-        """从 pickle 文件加载训练状态"""
-        train_state_path = "train_state.pkl"
+        """Load training state from a pickle file"""
+        train_state_path = os.path.join(MODEL_DIR, "train_state.pkl")
         try:
             if os.path.exists(train_state_path):
                 with open(train_state_path, "rb") as f:
@@ -377,50 +355,52 @@ class TrainPipeline:
                 self.train_iters = state.get("train_iters", 0)
                 self.data_iters = state.get("data_iters", 0)
                 self.lr_multiplier = state.get("lr_multiplier", 1.0)
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 已加载训练状态: 训练迭代 {self.train_iters}, 数据迭代 {self.data_iters}"
-                )
+                log(f"Loaded training state: train_iters={self.train_iters}, data_iters={self.data_iters}")
                 return True
             else:
-                print(f"[{time.strftime('%H:%M:%S')}] 训练状态文件不存在，从头开始训练")
+                log("Training state not found; starting blankly", level="WARNING")
                 return False
         except Exception as e:
-            print(
-                f"[{time.strftime('%H:%M:%S')}] 无法加载训练状态: {str(e)}，从头开始训练"
-            )
-        return False
+            log(f"Failed to load training state: {str(e)}; starting blankly", level="ERROR")
+            return False
 
     def run(self):
-        """开始训练"""
+        """Start training"""
         try:
             # 尝试加载之前的训练状态
             self.load_train_state()
 
-            # 检查优化的pickle数据文件是否存在
-            if not os.path.exists(self.pickle_path):
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 错误: 优化的数据文件 {self.pickle_path} 不存在"
-                )
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 请先运行 convert.py 生成特化的数据文件"
-                )
-                return
-
             while True:
                 if self.dataset is None:
-                    print(f"[{time.strftime('%H:%M:%S')}] 首次加载pickle数据集")
-                    self.dataset = PickleDataset(self.pickle_path)
+                    log("Loading .npy dataset")
+                    states_path = os.path.join(self.data_dir, "states.npy")
+                    if not os.path.exists(states_path):
+                        log(f"Not found: {states_path}", level="ERROR")
+                        log("Please run convert.py to generate .npy data", level="ERROR")
+                        sys.exit(1)
+                    self.dataset = NpyMemmapDataset(self.data_dir)
+                    use_cuda = torch.cuda.is_available()
+                    # Use the same collate_fn as above to avoid read-only NumPy warnings
+                    def npy_collate(batch):
+                        states, mcts, winners = zip(*batch)
+                        states = torch.tensor(np.stack(states), dtype=torch.float32)
+                        mcts = torch.tensor(np.stack(mcts), dtype=torch.float32)
+                        winners = torch.tensor(np.array(winners), dtype=torch.float32)
+                        return states, mcts, winners
+
                     self.dataloader = DataLoader(
                         self.dataset,
                         self.batch_size,
                         shuffle=True,
-                        pin_memory=True,
+                        pin_memory=use_cuda,
+                        collate_fn=npy_collate,
                     )
 
-                print(f"[{time.strftime('%H:%M:%S')}] 训练迭代 {self.train_iters}")
+                log(f"Training iteration {self.train_iters}")
                 if len(self.dataset) > self.batch_size:
                     loss, entropy = self.policy_update()
-                    self.policy_value_net.save_model(MODEL_PATH)
+                    os.makedirs(MODEL_DIR, exist_ok=True)
+                    self.policy_value_net.save_model(self.current_policy_path)
                     self.train_iters += 1
                     self.save_train_state()
                     if self.train_iters % self.check_freq == 0:
@@ -436,30 +416,30 @@ class TrainPipeline:
                         #             self.pure_mcts_playout_num < 5000):
                         #         self.pure_mcts_playout_num += 1000
                         #         self.best_win_ratio = 0.0
-                        print(
-                            f"[{time.strftime('%H:%M:%S')}] 保存检查点: 训练迭代 {self.train_iters}"
-                        )
+                        log(f"Saved checkpoint: training iteration {self.train_iters}")
+                        os.makedirs(MODEL_DIR, exist_ok=True)
                         self.policy_value_net.save_model(
-                            f"models/current_policy_batch{self.train_iters}.pkl"
+                            os.path.join(MODEL_DIR, f"current_policy_batch{self.train_iters}.pkl")
                         )
                 else:
-                    print(f"[{time.strftime('%H:%M:%S')}] 数据不足，等待更多数据")
-                    time.sleep(UPDATE_INTERVAL)
+                    log("Insufficient data; exiting", level="ERROR")
+                    sys.exit(1)
         except KeyboardInterrupt:
-            print(f"\r[{time.strftime('%H:%M:%S')}] 保存训练状态并退出")
+            log("Saving training state and exiting")
             self.save_train_state()
-            print(f"[{time.strftime('%H:%M:%S')}] 训练状态已保存到 train_state.pkl")
+            log(f"Training state saved to {os.path.join(MODEL_DIR, 'train_state.pkl')}")
 
 
 if __name__ == "__main__":
-    # 添加命令行参数解析
+    # 配置训练日志输出到 logs/train.log
+    get_logger(log_dir="logs", log_file="train.log")
     parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
     parser.add_argument(
-        "--model", type=str, default="current_policy.pkl", help="初始化模型路径"
-    )
-    parser.add_argument(
-        "--debug", action="store_true", help="开启调试日志（前3个batch详细输出）"
+        "--model",
+        type=str,
+        default=os.path.join(MODEL_DIR, "current_policy.pkl"),
+        help="初始化模型路径",
     )
     args = parser.parse_args()
-    training_pipeline = TrainPipeline(init_model=args.model, debug=args.debug)
+    training_pipeline = TrainPipeline(init_model=args.model)
     training_pipeline.run()

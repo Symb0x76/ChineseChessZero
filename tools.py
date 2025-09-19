@@ -1,5 +1,51 @@
 import cchess
 import numpy as np
+import os
+from loguru import logger
+
+
+_configured = False
+
+
+def get_logger(log_dir: str = "logs", log_file: str = "app.log"):
+    global _configured
+    if not _configured:
+        os.makedirs(log_dir, exist_ok=True)
+        logger.remove()  # 移除默认 handler
+        # 控制台彩色输出
+        logger.add(
+            sink=lambda msg: print(msg, end=""),
+            colorize=True,
+            format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+            enqueue=True,
+        )
+        # 文件日志，按大小轮换，保留 10 个，压缩
+        logger.add(
+            os.path.join(log_dir, log_file),
+            rotation="10 MB",
+            retention=10,
+            compression="zip",
+            encoding="utf-8",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+            enqueue=True,
+        )
+        _configured = True
+    return logger
+
+
+def log(message: str, level: str = "INFO"):
+    lg = get_logger()
+    level = (level or "INFO").upper()
+    if level == "DEBUG":
+        lg.debug(message)
+    elif level == "WARNING":
+        lg.warning(message)
+    elif level == "ERROR":
+        lg.error(message)
+    elif level == "CRITICAL":
+        lg.critical(message)
+    else:
+        lg.info(message)
 
 
 def decode_board(board):

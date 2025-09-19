@@ -4,6 +4,7 @@ import webbrowser
 import json
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
+from tools import log
 
 
 def create_window_visualization(host="127.0.0.1", port=8000):
@@ -193,7 +194,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                             # 每5秒检查一次是否有更新
                             time.sleep(5)
                         except (BrokenPipeError, ConnectionResetError) as e:
-                            print(f"[{time.strftime('%H:%M:%S')}] 客户端连接中断")
+                            log("Client connection interrupted", "WARNING")
                 except (
                     ConnectionResetError,
                     ConnectionAbortedError,
@@ -201,7 +202,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                     TimeoutError,
                     OSError,
                 ) as e:
-                    # print(f"[{time.strftime('%H:%M:%S')}] 连接已关闭")
+                    # log("连接已关闭")
                     # 客户端断开连接，结束事件流
                     return
 
@@ -212,7 +213,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
             def log_error(self, format, *args):
                 """禁止输出HTTP错误日志"""
                 # 可以选择完全禁止，或者只输出简短的信息
-                # print(f"[{time.strftime('%H:%M:%S')}] 连接错误 (这是正常的，客户端可能已关闭)")
+                # log("Connection error (client likely closed)", "WARNING")
                 pass
 
         def fix_svg(svg_content):
@@ -273,7 +274,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                         "<svg", '<svg viewBox="-600 -600 1200 1200"'
                     )
             except Exception as e:
-                print(f"[{time.strftime('%H:%M:%S')}] SVG修复出错: {e}")
+                log(f"SVG fix error: {e}", "ERROR")
                 return create_error_svg("SVG处理出错")
 
             return svg_content
@@ -317,10 +318,10 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                 self.server_thread = threading.Thread(target=run_server, daemon=True)
                 self.server_thread.start()
 
-                print(f"HTTP服务已启动在 http://{self.host}:{self.port}/")
+                log(f"HTTP server started at http://{self.host}:{self.port}/")
                 if self.host == "0.0.0.0" or self.host == "127.0.0.1":
-                    print(f"本地访问: http://localhost:{self.port}/")
-                    print(f"局域网访问请使用: http://<你的IP地址>:{self.port}/")
+                    log(f"Local access: http://localhost:{self.port}/")
+                    log(f"For LAN access: http://<your-ip>:{self.port}/")
 
                 return self
 
@@ -340,14 +341,12 @@ def create_window_visualization(host="127.0.0.1", port=8000):
                     try:
                         svg_content = str(svg_content)
                     except Exception as e:
-                        print(
-                            f"[{time.strftime('%H:%M:%S')}] 警告: 无法将SVG转换为字符串: {e}"
-                        )
+                        log(f"Unable to convert SVG to string: {e}", "WARNING")
                         svg_content = create_error_svg("SVG转换错误")
 
                 # 检查并确保SVG内容可以正确嵌入HTML
                 if svg_content and not svg_content.strip().startswith("<svg"):
-                    print(f"[{time.strftime('%H:%M:%S')}] 警告: 提供的内容不是SVG格式")
+                    log("Provided content is not SVG", "WARNING")
                     svg_content = create_error_svg("内容非SVG格式")
                 else:
                     svg_content = fix_svg(svg_content)
@@ -376,7 +375,7 @@ def create_window_visualization(host="127.0.0.1", port=8000):
         return get_window
 
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] 错误: {e}")
+        log(f"Error: {e}", "ERROR")
 
         # 回退方案
         def dummy_window():

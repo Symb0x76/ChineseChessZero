@@ -2,3 +2,4 @@ IPython
 numpy
 Pillow
 h5py
+loguru

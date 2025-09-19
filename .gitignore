@@ -3,5 +3,5 @@ __pycache__
 python-chinese-chess
 models
 mcts_pure.py
-*.h5
-*.pkl
+data
+logs

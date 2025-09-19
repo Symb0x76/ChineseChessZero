@@ -1,5 +1,4 @@
 import cchess
-import time
 import os
 import argparse
 import h5py
@@ -7,11 +6,13 @@ import numpy as np
 from net import PolicyValueNet
 from mcts import MCTS_AI
 from game import Game
-from parameters import C_PUCT, PLAYOUT, DATA_PATH, MODEL_PATH
+from parameters import C_PUCT, PLAYOUT, DATA_DIR, MODEL_DIR
 from tools import (
     move_id2move_action,
     move_action2move_id,
     flip,
+    log,
+    get_logger,
 )
 
 """
@@ -27,38 +28,34 @@ class CollectPipeline:
     def __init__(self, init_model=None):
         self.board = cchess.Board()
         self.game = Game(self.board)
-        # 对弈参数
-        self.temp = 1.0  # 温度
-        self.n_playout = PLAYOUT  # 每次移动的模拟次数
+        self.temp = 1.0
+        self.n_playout = PLAYOUT
         self.c_puct = C_PUCT
-        self.init_model = init_model  # 初始化模型路径
+        self.init_model = init_model
         self.iters = 0
         self.mcts_ai = None
         self.policy_value_net = None  # 延迟初始化
-        # 尝试从已有文件加载 iters
-        if os.path.exists(DATA_PATH):
+        self.data_path = os.path.join(DATA_DIR, "data.h5")
+        # Load iters
+        if os.path.exists(self.data_path):
             try:
-                with h5py.File(DATA_PATH, "r") as h5f:
+                with h5py.File(self.data_path, "r") as h5f:
                     self.iters = h5f.attrs.get("iters", 0)
-                    print(
-                        f"[{time.strftime('%H:%M:%S')}] 成功加载当前对局数: {self.iters}"
-                    )
+                    log(f"Current game count: {self.iters}")
             except Exception as e:
-                print(f"[{time.strftime('%H:%M:%S')}] 加载当前对局数失败: {str(e)}")
+                log(f"Failed to load current game count: {str(e)}", "ERROR")
 
-    # 从主体加载模型
+    # 加载模型
     def load_model(self):
-        if self.policy_value_net is None:  # 仅初始化一次
-            model_path = self.init_model if self.init_model else MODEL_PATH
+        if self.policy_value_net is None:
+            model_path = self.init_model if self.init_model else MODEL_DIR
             try:
-                self.policy_value_net = PolicyValueNet(model_file=model_path)
-                print(f"[{time.strftime('%H:%M:%S')}] 已加载模型: {model_path}")
+                self.policy_value_net = PolicyValueNet(model=model_path)
+                log(f"Loaded model: {model_path}")
             except Exception as e:
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 加载模型 {model_path} 失败: {str(e)}"
-                )
+                log(f"Failed to load model {model_path}: {str(e)}", "ERROR")
                 self.policy_value_net = PolicyValueNet()
-                print(f"[{time.strftime('%H:%M:%S')}] 已加载初始模型")
+                log("Loaded initial model")
             self.mcts_ai = MCTS_AI(
                 self.policy_value_net.policy_value_fn,
                 c_puct=self.c_puct,
@@ -96,18 +93,19 @@ class CollectPipeline:
             # 验证和修复概率分布
             prob_sum = np.sum(mcts_prob)
             if prob_sum <= 0:
-                print(f"[警告] mcts_prob 概率和为 {prob_sum}，跳过此步")
+                log(f"mcts_prob sum is {prob_sum}; skipping this step", "WARNING")
                 continue
             elif abs(prob_sum - 1.0) > 1e-6:
-                print(f"[信息] mcts_prob 概率和为 {prob_sum:.6f}，进行归一化")
+                log(f"mcts_prob sum is {prob_sum:.6f}; normalizing", "INFO")
                 mcts_prob = mcts_prob / prob_sum
 
             # 验证概率分布是否过于集中（类似one-hot）
             max_prob = np.max(mcts_prob)
             non_zero_count = np.sum(mcts_prob > 1e-8)
             if max_prob > 0.99 and non_zero_count <= 3:
-                print(
-                    f"[警告] mcts_prob 过于集中: max={max_prob:.4f}, 非零元素={non_zero_count}"
+                log(
+                    f"mcts_prob over-centered: max={max_prob:.4f}, non-zero elements={non_zero_count}",
+                    "WARNING",
                 )
 
             # 堆叠出完整数据
@@ -126,32 +124,27 @@ class CollectPipeline:
         )
         data_flip = []
         for states, mcts_prob, winner in data:
-            # 左右对称翻转红方和黑方状态
             states_flip = []
             for state in states:
                 states_flip.append(np.flip(state, axis=2))
-            # 向量化操作翻转概率
             mcts_prob_flip = mcts_prob[flip_map]
             data_flip.append((states_flip, mcts_prob_flip, winner))
         return data + data_flip
 
     def collect_data(self, is_shown=False):
-        """收集自我对弈的数据"""
+        """Collect self-play data"""
         self.load_model()  # 从本体处加载最新模型
         play_data = self.game.start_self_play(self.mcts_ai, is_shown=is_shown)
-        play_data = self.preprocess(play_data)  # 预处理数据
-        play_data = self.flip_data(play_data)  # 翻转数据
+        play_data = self.preprocess(play_data)
+        play_data = self.flip_data(play_data)
 
         try:
             # 创建 HDF5 文件并直接保存数据
-            with h5py.File(DATA_PATH, "a") as h5f:
-                # 获取当前游戏索引
+            with h5py.File(self.data_path, "a") as h5f:
                 current_iter = h5f.attrs.get("iters", 0)
-
-                # 创建游戏组
                 game_group = h5f.create_group(f"game_{current_iter}")
 
-                # 创建数据集 - 直接使用gzip压缩
+                # 直接使用gzip压缩
                 game_group.create_dataset(
                     "states",
                     data=[state for state, _, _ in play_data],
@@ -168,31 +161,31 @@ class CollectPipeline:
 
                 # 更新游戏索引
                 h5f.attrs["iters"] = current_iter + 1
-                self.iters = current_iter + 1  # 更新实例中的迭代次数
+                self.iters = current_iter + 1
 
-                print(f"[{time.strftime('%H:%M:%S')}] 成功保存数据到 {DATA_PATH}")
+                log(f"Saved data to {self.data_path}")
 
             # 释放内存
             del play_data
         except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] 保存数据失败: {str(e)}")
+            log(f"Failed to save data: {str(e)}", "ERROR")
 
         return self.iters
 
     def run(self, is_shown=False):
-        """开始收集数据"""
+        """Start data collection"""
         try:
             while True:
                 iters = self.collect_data(is_shown=is_shown)
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] 第 {iters} 局, 共 {self.episode_len} 步"
-                )
+                log(f"Episode {iters}, steps {self.episode_len}")
         except KeyboardInterrupt:
-            print(f"\r[{time.strftime('%H:%M:%S')}] 退出")
+            log("Exit")
 
 
 if __name__ == "__main__":
     # 添加命令行参数解析
+    # 配置采集日志输出到 logs/collect.log
+    get_logger(log_dir="logs", log_file="collect.log")
     parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
     parser.add_argument(
         "--show", action="store_true", default=False, help="是否显示棋盘对弈过程"
