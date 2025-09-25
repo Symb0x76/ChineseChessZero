@@ -4,6 +4,7 @@ import time
 import numpy as np
 from IPython.display import display, SVG
 from tools import decode_board, move_id2move_action, is_tie, log
+from rich.progress import Progress, BarColumn, TextColumn
 from frontend import get_chess_window
 
 
@@ -129,7 +130,9 @@ class Game(object):
                 return winner
 
     # 使用蒙特卡洛树搜索开始自我对弈，存储游戏状态（状态，蒙特卡洛落子概率，胜负手）三元组用于神经网络训练
-    def start_self_play(self, player, is_shown=False, temp=1.0):
+    def start_self_play(
+        self, player, is_shown=False, temp=1.0, game_index: int | None = None
+    ):
         """
         开始自我对弈，用于收集训练数据
 
@@ -146,6 +149,7 @@ class Game(object):
         self.reset_states_history()
         mcts_probs, current_players = [], []
         move_count = 0
+        avg_step_time = 0.0
 
         # 开始自我对弈
         while True:
@@ -154,17 +158,31 @@ class Game(object):
             # 动态调整温度：前30步使用较高温度增加探索，后续降低
             current_temp = temp if move_count <= 30 else max(0.1, temp * 0.5)
 
-            # 每20步输出一次耗时
-            if move_count % 10 == 0:
-                start_time = time.time()
-                move, move_probs = player.get_action(
-                    self.board, temp=temp, return_prob=True
+            # 进度条：每步都会显示 playout 进度和平均用时
+            step_start_time = time.time()
+            with Progress(
+                TextColumn("Game: {task.fields[game]}"),
+                TextColumn("| Step: {task.fields[step]}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total} playouts"),
+                TextColumn("| avg: {task.fields[avg]:.2f}s/step"),
+                transient=True,
+            ) as progress:
+                task = progress.add_task(
+                    "mcts",
+                    total=player.mcts.n_playout,
+                    game=(game_index if game_index is not None else "-"),
+                    step=move_count,
+                    avg=avg_step_time if avg_step_time > 0 else 0.0,
                 )
-                log(f"Step {move_count} took {time.time() - start_time:.2f} s")
-            else:
                 move, move_probs = player.get_action(
-                    self.board, temp=temp, return_prob=True
+                    self.board,
+                    temp=current_temp,
+                    return_prob=True,
+                    on_playout=lambda d: progress.update(task, advance=d),
                 )
+            step_time = time.time() - step_start_time
+            avg_step_time = (avg_step_time * (move_count - 1) + step_time) / move_count
 
             # 验证概率分布
             prob_sum = np.sum(move_probs)

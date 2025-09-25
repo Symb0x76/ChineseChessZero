@@ -1,51 +1,74 @@
 import cchess
 import numpy as np
 import os
-from loguru import logger
+import sys
+import time
+from rich.console import Console
+from parameters import LOG_LEVEL
+
+_console: Console | None = None
 
 
-_configured = False
+def log(message: str, level: str = "INFO", log_path: str | None = None):
+    """Print a log line using Rich and persist to a .log file.
 
+    - Console output is filtered by parameters.LOG_LEVEL (numeric 1..5).
+    - File output is always written for all levels.
+    - File path rule: <log_path or project_root/logs>/<script_basename>.log
+    """
+    global _console
+    if _console is None:
+        _console = Console()
+    console = _console
 
-def get_logger(log_dir: str = "logs", log_file: str = "app.log"):
-    global _configured
-    if not _configured:
-        os.makedirs(log_dir, exist_ok=True)
-        logger.remove()  # 移除默认 handler
-        # 控制台彩色输出
-        logger.add(
-            sink=lambda msg: print(msg, end=""),
-            colorize=True,
-            format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-            enqueue=True,
-        )
-        # 文件日志，按大小轮换，保留 10 个，压缩
-        logger.add(
-            os.path.join(log_dir, log_file),
-            rotation="10 MB",
-            retention=10,
-            compression="zip",
-            encoding="utf-8",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
-            enqueue=True,
-        )
-        _configured = True
-    return logger
+    # Normalize level and styles
+    lvl = (level or "INFO").upper()
+    style_map = {
+        "DEBUG": "dim",
+        "INFO": "cyan",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "bold red",
+    }
+    level_rank = {"DEBUG": 1, "INFO": 2, "WARNING": 3, "ERROR": 4, "CRITICAL": 5}
 
+    # Console threshold from parameters (numeric only), clamp 1..5
+    try:
+        console_threshold = int(LOG_LEVEL)
+    except Exception:
+        console_threshold = 2
+    console_threshold = max(1, min(5, console_threshold))
+    current_rank = level_rank.get(lvl, 2)
 
-def log(message: str, level: str = "INFO"):
-    lg = get_logger()
-    level = (level or "INFO").upper()
-    if level == "DEBUG":
-        lg.debug(message)
-    elif level == "WARNING":
-        lg.warning(message)
-    elif level == "ERROR":
-        lg.error(message)
-    elif level == "CRITICAL":
-        lg.critical(message)
-    else:
-        lg.info(message)
+    # Build file path with default project_root/logs
+    try:
+        script_path = os.path.abspath(sys.argv[0] or "app")
+        script_base = os.path.splitext(os.path.basename(script_path))[0] or "app"
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        default_dir = os.path.join(project_root, "logs")
+        target_dir = log_path or default_dir
+        os.makedirs(target_dir, exist_ok=True)
+        file_path = os.path.join(target_dir, f"{script_base}.log")
+    except Exception:
+        # Fallback to CWD/logs/app.log, then CWD/app.log
+        try:
+            fallback_dir = os.path.join(os.getcwd(), "logs")
+            os.makedirs(fallback_dir, exist_ok=True)
+            file_path = os.path.join(fallback_dir, "app.log")
+        except Exception:
+            file_path = os.path.join(os.getcwd(), "app.log")
+
+    # Always write to file (all levels)
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(f"{ts} | {lvl:<8} | {message}\n")
+    except Exception:
+        console.log(f"Failed to write to {file_path}", style="red")
+
+    # Console output, filtered by LOG_LEVEL
+    if current_rank >= console_threshold:
+        console.log(f"[{lvl}] {message}", style=style_map.get(lvl, "cyan"))
 
 
 def decode_board(board):

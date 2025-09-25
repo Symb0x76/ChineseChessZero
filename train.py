@@ -1,12 +1,12 @@
 import cchess
 import pickle
 import torch
-import time
 import os
 import argparse
 import sys
 import numpy as np
 import copy
+from tools import log
 from game import Game
 from net import PolicyValueNet
 from torch.amp import GradScaler, autocast
@@ -18,12 +18,10 @@ from parameters import (
     BATCH_SIZE,
     EPOCHS,
     KL_TARG,
-    UPDATE_INTERVAL,
     CHECK_FREQ,
     DATA_DIR,
     MODEL_DIR,
 )
-from tools import log, get_logger
 
 
 class TrainPipeline:
@@ -60,7 +58,10 @@ class TrainPipeline:
                 self.policy_value_net = PolicyValueNet(model=init_model)
                 log(f"Loaded model: {init_model}")
             except Exception as e:
-                log(f"Failed to load model {init_model}: {e}. Start training from scratch", level="WARNING")
+                log(
+                    f"Failed to load model {init_model}: {e}. Start training from scratch",
+                    level="WARNING",
+                )
                 self.policy_value_net = PolicyValueNet()
         else:
             log("Start training blankly")
@@ -355,13 +356,18 @@ class TrainPipeline:
                 self.train_iters = state.get("train_iters", 0)
                 self.data_iters = state.get("data_iters", 0)
                 self.lr_multiplier = state.get("lr_multiplier", 1.0)
-                log(f"Loaded training state: train_iters={self.train_iters}, data_iters={self.data_iters}")
+                log(
+                    f"Loaded training state: train_iters={self.train_iters}, data_iters={self.data_iters}"
+                )
                 return True
             else:
                 log("Training state not found; starting blankly", level="WARNING")
                 return False
         except Exception as e:
-            log(f"Failed to load training state: {str(e)}; starting blankly", level="ERROR")
+            log(
+                f"Failed to load training state: {str(e)}; starting blankly",
+                level="ERROR",
+            )
             return False
 
     def run(self):
@@ -376,10 +382,13 @@ class TrainPipeline:
                     states_path = os.path.join(self.data_dir, "states.npy")
                     if not os.path.exists(states_path):
                         log(f"Not found: {states_path}", level="ERROR")
-                        log("Please run convert.py to generate .npy data", level="ERROR")
+                        log(
+                            "Please run convert.py to generate .npy data", level="ERROR"
+                        )
                         sys.exit(1)
                     self.dataset = NpyMemmapDataset(self.data_dir)
                     use_cuda = torch.cuda.is_available()
+
                     # Use the same collate_fn as above to avoid read-only NumPy warnings
                     def npy_collate(batch):
                         states, mcts, winners = zip(*batch)
@@ -419,7 +428,9 @@ class TrainPipeline:
                         log(f"Saved checkpoint: training iteration {self.train_iters}")
                         os.makedirs(MODEL_DIR, exist_ok=True)
                         self.policy_value_net.save_model(
-                            os.path.join(MODEL_DIR, f"current_policy_batch{self.train_iters}.pkl")
+                            os.path.join(
+                                MODEL_DIR, f"current_policy_batch{self.train_iters}.pkl"
+                            )
                         )
                 else:
                     log("Insufficient data; exiting", level="ERROR")
@@ -431,8 +442,6 @@ class TrainPipeline:
 
 
 if __name__ == "__main__":
-    # 配置训练日志输出到 logs/train.log
-    get_logger(log_dir="logs", log_file="train.log")
     parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
     parser.add_argument(
         "--model",

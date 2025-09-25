@@ -24,3 +24,5 @@ EPOCHS = 10
 KL_TARG = 0.02
 # 保存模型的频率
 CHECK_FREQ = 10
+# 输出到控制台的日志等级 ({"DEBUG": 1, "INFO": 2, "WARNING": 3, "ERROR": 4, "CRITICAL": 5})
+LOG_LEVEL = 3

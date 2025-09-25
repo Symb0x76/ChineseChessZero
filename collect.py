@@ -12,7 +12,6 @@ from tools import (
     move_action2move_id,
     flip,
     log,
-    get_logger,
 )
 
 """
@@ -55,7 +54,6 @@ class CollectPipeline:
             except Exception as e:
                 log(f"Failed to load model {model_path}: {str(e)}", "ERROR")
                 self.policy_value_net = PolicyValueNet()
-                log("Loaded initial model")
             self.mcts_ai = MCTS_AI(
                 self.policy_value_net.policy_value_fn,
                 c_puct=self.c_puct,
@@ -103,8 +101,9 @@ class CollectPipeline:
             max_prob = np.max(mcts_prob)
             non_zero_count = np.sum(mcts_prob > 1e-8)
             if max_prob > 0.99 and non_zero_count <= 3:
+                game_idx = getattr(self, "current_game_index", "?")
                 log(
-                    f"mcts_prob over-centered: max={max_prob:.4f}, non-zero elements={non_zero_count}",
+                    f"Game {game_idx} | mcts_prob over-centered: max={max_prob:.4f}, non-zero elements={non_zero_count}",
                     "WARNING",
                 )
 
@@ -134,7 +133,11 @@ class CollectPipeline:
     def collect_data(self, is_shown=False):
         """Collect self-play data"""
         self.load_model()  # 从本体处加载最新模型
-        play_data = self.game.start_self_play(self.mcts_ai, is_shown=is_shown)
+        # 保存当前对局索引用于日志展示
+        self.current_game_index = self.iters + 1
+        play_data = self.game.start_self_play(
+            self.mcts_ai, is_shown=is_shown, game_index=self.current_game_index
+        )
         play_data = self.preprocess(play_data)
         play_data = self.flip_data(play_data)
 
@@ -183,9 +186,6 @@ class CollectPipeline:
 
 
 if __name__ == "__main__":
-    # 添加命令行参数解析
-    # 配置采集日志输出到 logs/collect.log
-    get_logger(log_dir="logs", log_file="collect.log")
     parser = argparse.ArgumentParser(description="收集中国象棋自对弈数据")
     parser.add_argument(
         "--show", action="store_true", default=False, help="是否显示棋盘对弈过程"
@@ -194,6 +194,5 @@ if __name__ == "__main__":
         "--model", type=str, default="current_policy.pkl", help="初始化模型路径"
     )
     args = parser.parse_args()
-    # 创建数据收集管道实例
     collecting_pipeline = CollectPipeline(init_model=args.model)
     collecting_pipeline.run(is_shown=args.show)

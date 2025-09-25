@@ -128,7 +128,14 @@ class MCTS(object):
         # 必须添加符号，因为两个玩家共用一个搜索树
         node.update_recursive(-leaf_value)
 
-    def get_move_probs(self, board, temp=1e-3, red_states=None, black_states=None):
+    def get_move_probs(
+        self,
+        board,
+        temp=1e-3,
+        red_states=None,
+        black_states=None,
+        on_playout=None,
+    ):
         """
         按顺序运行所有搜索并返回可用的动作及其相应的概率
 
@@ -140,6 +147,11 @@ class MCTS(object):
         for _ in range(self.n_playout):
             board_copy = board.copy()
             self.playout(board_copy, red_states=red_states, black_states=black_states)
+            if on_playout is not None:
+                try:
+                    on_playout(1)
+                except Exception:
+                    pass
 
         # 跟据根节点处的访问计数来计算移动概率
         act_visits = [(act, node.visits) for act, node in self.root.children.items()]
@@ -182,7 +194,7 @@ class MCTS_AI(object):
     def reset_player(self):
         self.mcts.update_with_move(-1)
 
-    def get_action(self, board, temp=1e-3, return_prob=False):
+    def get_action(self, board, temp=1e-3, return_prob=False, on_playout=None):
         """
         获取AI的动作
 
@@ -193,7 +205,7 @@ class MCTS_AI(object):
         # 动作空间大小
         move_probs = np.zeros(2086)
 
-        acts, probs = self.mcts.get_move_probs(board, temp)
+        acts, probs = self.mcts.get_move_probs(board, temp, on_playout=on_playout)
         move_probs[list(acts)] = probs
         if self.is_selfplay:
             # 添加Dirichlet Noise进行探索（自我对弈需要）
