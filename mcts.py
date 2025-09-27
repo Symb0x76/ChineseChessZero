@@ -144,14 +144,20 @@ class MCTS(object):
         """
         self.red_history = red_states
         self.black_history = black_states
-        for _ in range(self.n_playout):
+        # 自适应节流
+        interval = max(1, self.n_playout // 100)
+        acc = 0
+        for i in range(self.n_playout):
             board_copy = board.copy()
             self.playout(board_copy, red_states=red_states, black_states=black_states)
-            if on_playout is not None:
+            acc += 1
+            if on_playout is not None and (acc >= interval or i == self.n_playout - 1):
+                # 把累计的完成数一次性上报
                 try:
-                    on_playout(1)
+                    on_playout(acc)
                 except Exception:
                     pass
+                acc = 0
 
         # 跟据根节点处的访问计数来计算移动概率
         act_visits = [(act, node.visits) for act, node in self.root.children.items()]
