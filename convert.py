@@ -30,7 +30,9 @@ def convert_h5_to_npy(h5_path: str = None, out_dir: str = None):
     out_states, out_mcts, out_winners, out_meta = _derive_out_paths(out_dir)
 
     log(f"Start converting {h5_path}")
-    log(f"Output files:\n  - {out_states}\n  - {out_mcts}\n  - {out_winners}\n  - {out_meta}")
+    log(
+        f"Output files:\n  - {out_states}\n  - {out_mcts}\n  - {out_winners}\n  - {out_meta}"
+    )
 
     total_steps = 0
     with h5py.File(h5_path, "r") as h5f:

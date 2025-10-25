@@ -24,6 +24,15 @@ from parameters import (
 )
 
 
+def npy_collate(batch):
+    """Collate function that stacks numpy arrays into writable tensors."""
+    states, mcts, winners = zip(*batch)
+    states = torch.tensor(np.stack(states), dtype=torch.float32)
+    mcts = torch.tensor(np.stack(mcts), dtype=torch.float32)
+    winners = torch.tensor(np.array(winners), dtype=torch.float32)
+    return states, mcts, winners
+
+
 class TrainPipeline:
     def __init__(self, init_model: str | None = None):
         """初始化训练流水线"""
@@ -47,6 +56,7 @@ class TrainPipeline:
         self.data_iters = 0
         self.dataset = None
         self.dataloader = None
+        self.num_workers = max(1, min(8, os.cpu_count() // 2))
         # 训练数据目录（与 convert.py 一致：states.npy/mcts.npy/winners.npy）
         self.data_dir = DATA_DIR
         # 当前模型路径由 MODEL_DIR 推导
@@ -81,14 +91,6 @@ class TrainPipeline:
 
         # DataLoader 准备
         if self.dataloader is None:
-            # collate_fn: stack NumPy arrays then copy into writable tensors
-            def npy_collate(batch):
-                states, mcts, winners = zip(*batch)
-                states = torch.tensor(np.stack(states), dtype=torch.float32)
-                mcts = torch.tensor(np.stack(mcts), dtype=torch.float32)
-                winners = torch.tensor(np.array(winners), dtype=torch.float32)
-                return states, mcts, winners
-
             log(f"Loading .npy dataset from: {self.data_dir}")
             states_path = os.path.join(self.data_dir, "states.npy")
             if not os.path.exists(states_path):
@@ -96,12 +98,26 @@ class TrainPipeline:
                 log("Please run convert.py to generate .npy data", level="ERROR")
                 raise FileNotFoundError(states_path)
             self.dataset = NpyMemmapDataset(self.data_dir)
+            # 只在加载时统计一次胜负分布
+            winners_numpy = np.asarray(self.dataset.winners)
+            total_w = len(winners_numpy)
+            if total_w > 0:
+                win_neg = int(np.sum(winners_numpy < 0))
+                win_zero = int(np.sum(winners_numpy == 0))
+                win_pos = int(np.sum(winners_numpy > 0))
+                log(
+                    f"Winners distribution: total={total_w} -1:{win_neg} ({win_neg/total_w:.2%}) 0:{win_zero} ({win_zero/total_w:.2%}) 1:{win_pos} ({win_pos/total_w:.2%})"
+                )
+            else:
+                log("Winners distribution: no data", level="WARNING")
             # 在 CUDA 上启用 pin_memory 能提升 H2D 传输性能
             self.dataloader = DataLoader(
                 self.dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
                 pin_memory=use_cuda,
+                num_workers=self.num_workers,
+                persistent_workers=self.num_workers > 0,
                 collate_fn=npy_collate,
             )
             log(f"Dataset loaded: {len(self.dataset)} samples")
@@ -110,74 +126,42 @@ class TrainPipeline:
         total_loss = total_entropy = 0.0
         total_policy_loss = total_value_loss = 0.0
         total_batches = 0
-        last_old_v = last_new_v = last_winner_batch = None
-        last_kl = 0.0
-        # winners 分布
-        win_neg = win_zero = win_pos = 0
 
-        for epoch in range(self.epochs):
-            epoch_loss = epoch_entropy = 0.0
-            epoch_policy_loss = epoch_value_loss = 0.0
+        for batch_idx, (state_batch, mcts_probs_batch, winner_batch) in enumerate(
+            self.dataloader
+        ):
+            # 校验 mcts_probs 归一性
+            sums = mcts_probs_batch.sum(dim=1)
+            if not ((sums > 0.99) & (sums < 1.01)).all():
+                raise ValueError("mcts_probs_batch rows must sum to 1 (±0.01)")
+            if torch.isnan(mcts_probs_batch).any():
+                raise ValueError("mcts_probs_batch contains NaN")
 
-            for batch_idx, (state_batch, mcts_probs_batch, winner_batch) in enumerate(
-                self.dataloader
-            ):
-                # 校验 mcts_probs 归一性
-                sums = mcts_probs_batch.sum(dim=1)
-                if not ((sums > 0.99) & (sums < 1.01)).all():
-                    raise ValueError("mcts_probs_batch rows must sum to 1 (±0.01)")
-                if torch.isnan(mcts_probs_batch).any():
-                    raise ValueError("mcts_probs_batch contains NaN")
+            # 设置学习率（可动态调整）
+            current_lr = self.learning_rate * self.lr_multiplier
+            for g in self.policy_value_net.optimizer.param_groups:
+                g["lr"] = current_lr
 
-                # 设置学习率（可动态调整）
-                current_lr = self.learning_rate * self.lr_multiplier
-                for g in self.policy_value_net.optimizer.param_groups:
-                    g["lr"] = current_lr
+            state_batch = state_batch.float().to(device)
+            mcts_probs_batch = mcts_probs_batch.float().to(device)
+            winner_batch = winner_batch.float().to(device)
 
-                state_batch = state_batch.float().to(device)
-                mcts_probs_batch = mcts_probs_batch.float().to(device)
-                winner_batch = winner_batch.float().to(device)
+            # 旧策略 (KL 基线)
+            old_probs, old_v = self.policy_value_net.policy_value(state_batch)
+            # 切回训练模式 (policy_value 内部设置 eval)
+            self.policy_value_net.policy_value_net.train()
 
-                # 旧策略 (KL 基线)
-                old_probs, old_v = self.policy_value_net.policy_value(state_batch)
-                # 切回训练模式 (policy_value 内部设置 eval)
-                self.policy_value_net.policy_value_net.train()
-
-                self.policy_value_net.optimizer.zero_grad()
-                # 备份参数用于潜在回滚（熵塌陷）
-                backup_weights = {
-                    k: v.clone()
-                    for k, v in self.policy_value_net.policy_value_net.state_dict().items()
-                }
-                backup_opt_state = copy.deepcopy(
-                    self.policy_value_net.optimizer.state_dict()
-                )
-                if use_cuda:
-                    with autocast("cuda"):
-                        log_act_probs, value = self.policy_value_net.policy_value_net(
-                            state_batch
-                        )
-                        value = value.flatten()
-                        value_loss = torch.nn.functional.mse_loss(value, winner_batch)
-                        if self.label_smoothing > 0:
-                            eps = self.label_smoothing
-                            smooth_target = (
-                                1 - eps
-                            ) * mcts_probs_batch + eps / mcts_probs_batch.size(1)
-                        else:
-                            smooth_target = mcts_probs_batch
-                        policy_loss = -torch.mean(
-                            torch.sum(smooth_target * log_act_probs, dim=1)
-                        )
-                        loss = value_loss + policy_loss
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(self.policy_value_net.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.policy_value_net.policy_value_net.parameters(), 5.0
-                    )
-                    scaler.step(self.policy_value_net.optimizer)
-                    scaler.update()
-                else:
+            self.policy_value_net.optimizer.zero_grad()
+            # 备份参数用于潜在回滚（熵塌陷）
+            backup_weights = {
+                k: v.clone()
+                for k, v in self.policy_value_net.policy_value_net.state_dict().items()
+            }
+            backup_opt_state = copy.deepcopy(
+                self.policy_value_net.optimizer.state_dict()
+            )
+            if use_cuda:
+                with autocast("cuda"):
                     log_act_probs, value = self.policy_value_net.policy_value_net(
                         state_batch
                     )
@@ -194,89 +178,99 @@ class TrainPipeline:
                         torch.sum(smooth_target * log_act_probs, dim=1)
                     )
                     loss = value_loss + policy_loss
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        self.policy_value_net.policy_value_net.parameters(), 5.0
-                    )
-                    self.policy_value_net.optimizer.step()
-                # 数值稳定性检查
-                if (
-                    torch.isnan(loss)
-                    or torch.isinf(loss)
-                    or torch.isnan(log_act_probs).any()
-                    or torch.isinf(log_act_probs).any()
-                ):
+                scaler.scale(loss).backward()
+                scaler.unscale_(self.policy_value_net.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    self.policy_value_net.policy_value_net.parameters(), 5.0
+                )
+                scaler.step(self.policy_value_net.optimizer)
+                scaler.update()
+            else:
+                log_act_probs, value = self.policy_value_net.policy_value_net(
+                    state_batch
+                )
+                value = value.flatten()
+                value_loss = torch.nn.functional.mse_loss(value, winner_batch)
+                if self.label_smoothing > 0:
+                    eps = self.label_smoothing
+                    smooth_target = (
+                        1 - eps
+                    ) * mcts_probs_batch + eps / mcts_probs_batch.size(1)
+                else:
+                    smooth_target = mcts_probs_batch
+                policy_loss = -torch.mean(
+                    torch.sum(smooth_target * log_act_probs, dim=1)
+                )
+                loss = value_loss + policy_loss
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.policy_value_net.policy_value_net.parameters(), 5.0
+                )
+                self.policy_value_net.optimizer.step()
+            # 数值稳定性检查
+            if (
+                torch.isnan(loss)
+                or torch.isinf(loss)
+                or torch.isnan(log_act_probs).any()
+                or torch.isinf(log_act_probs).any()
+            ):
+                self.policy_value_net.policy_value_net.load_state_dict(backup_weights)
+                self.policy_value_net.optimizer.load_state_dict(backup_opt_state)
+                old_mult = self.lr_multiplier
+                self.lr_multiplier = max(0.05, self.lr_multiplier / 2)
+                continue
+
+            # 新策略 (for KL)
+            new_probs, new_v = self.policy_value_net.policy_value(state_batch)
+            # policy_value 会将模型切到 eval，这里切回 train，避免对后续训练步骤造成影响
+            self.policy_value_net.policy_value_net.train()
+            last_old_v, last_new_v, last_winner_batch = old_v, new_v, winner_batch
+
+            # winners 分布累计
+            # KL(old||new) 使用 torch.nn.functional.kl_div
+            old_probs_tensor = torch.from_numpy(old_probs).to(dtype=torch.float32)
+            new_probs_tensor = torch.from_numpy(new_probs).to(dtype=torch.float32)
+            new_log_probs = (new_probs_tensor.clamp_min(1e-10)).log()
+            last_kl = torch.nn.functional.kl_div(
+                new_log_probs,
+                old_probs_tensor,
+                reduction="batchmean",
+            ).item()
+
+            with torch.no_grad():
+                entropy = -torch.mean(
+                    torch.sum(torch.exp(log_act_probs) * log_act_probs, dim=1)
+                ).item()
+
+            # 累计 epoch
+            l = float(loss.item())
+            policy_loss_val = float(policy_loss.item())
+            value_loss_val = float(value_loss.item())
+            total_loss += l
+            total_entropy += entropy
+            total_policy_loss += policy_loss_val
+            total_value_loss += value_loss_val
+            total_batches += 1
+
+            # 熵塌陷保护：若熵过低且目标分布非极端一热则回滚
+            if entropy < self.min_entropy_guard:
+                non_zero_targets = (
+                    (mcts_probs_batch > 0).sum(dim=1).float().mean().item()
+                )
+                if non_zero_targets > 1.5:  # 目标分布不是基本一热
                     self.policy_value_net.policy_value_net.load_state_dict(
                         backup_weights
                     )
                     self.policy_value_net.optimizer.load_state_dict(backup_opt_state)
-                    old_mult = self.lr_multiplier
-                    self.lr_multiplier = max(0.05, self.lr_multiplier / 2)
-                    continue
-
-                # 新策略 (for KL)
-                new_probs, new_v = self.policy_value_net.policy_value(state_batch)
-                # policy_value 会将模型切到 eval，这里切回 train，避免对后续训练步骤造成影响
-                self.policy_value_net.policy_value_net.train()
-                last_old_v, last_new_v, last_winner_batch = old_v, new_v, winner_batch
-
-                # winners 分布累计
-                with torch.no_grad():
-                    win_neg += (winner_batch < 0).sum().item()
-                    win_zero += (winner_batch == 0).sum().item()
-                    win_pos += (winner_batch > 0).sum().item()
-
-                # KL(old||new)
-                last_kl = float(
-                    np.mean(
-                        np.sum(
-                            old_probs
-                            * (np.log(old_probs + 1e-10) - np.log(new_probs + 1e-10)),
-                            axis=1,
-                        )
-                    )
-                )
-
-                with torch.no_grad():
-                    entropy = -torch.mean(
-                        torch.sum(torch.exp(log_act_probs) * log_act_probs, dim=1)
-                    ).item()
-
-                # 累计 epoch
-                l = float(loss.item())
-                epoch_loss += l
-                epoch_entropy += entropy
-                epoch_policy_loss += policy_loss.item()
-                epoch_value_loss += value_loss.item()
-                total_batches += 1
-
-                # 熵塌陷保护：若熵过低且目标分布非极端一热则回滚
-                if entropy < self.min_entropy_guard:
-                    non_zero_targets = (
-                        (mcts_probs_batch > 0).sum(dim=1).float().mean().item()
-                    )
-                    if non_zero_targets > 1.5:  # 目标分布不是基本一热
-                        self.policy_value_net.policy_value_net.load_state_dict(
-                            backup_weights
-                        )
-                        self.policy_value_net.optimizer.load_state_dict(
-                            backup_opt_state
-                        )
-                        old_multiplier = self.lr_multiplier
-                        self.lr_multiplier = max(0.1, self.lr_multiplier / 2)
-                        continue  # 不计入统计
-
-                if last_kl > self.kl_targ * 4:
-                    # 高 KL: 降低 lr_multiplier 并继续，不整轮早停
                     old_multiplier = self.lr_multiplier
-                    self.lr_multiplier = max(0.05, self.lr_multiplier / 1.5)
-                    # 保持训练，未早停
+                    self.lr_multiplier = max(0.1, self.lr_multiplier / 2)
+                    continue  # 不计入统计
 
-            # 汇总 epoch
-            total_loss += epoch_loss
-            total_entropy += epoch_entropy
-            total_policy_loss += epoch_policy_loss
-            total_value_loss += epoch_value_loss
+            if last_kl > self.kl_targ * 4:
+                # 高 KL: 降低 lr_multiplier 并继续，不整轮早停
+                old_multiplier = self.lr_multiplier
+                self.lr_multiplier = max(0.05, self.lr_multiplier / 1.5)
+                # 保持训练，未早停
 
         # 动态 lr_multiplier 调整
         if last_kl > self.kl_targ * 2 and self.lr_multiplier > 0.05:
@@ -314,13 +308,6 @@ class TrainPipeline:
             f"entropy:{avg_entropy:.6f},explained_var_old:{explained_var_old:.6f},explained_var_new:{explained_var_new:.6f}"
         )
 
-        total_w = win_neg + win_zero + win_pos
-        if total_w > 0:
-            log(
-                f"Winners distribution: total={total_w} -1:{win_neg} ({win_neg/total_w:.2%}) 0:{win_zero} ({win_zero/total_w:.2%}) 1:{win_pos} ({win_pos/total_w:.2%})"
-            )
-        else:
-            log("Winners distribution: no data", level="WARNING")
         return avg_loss, avg_entropy
 
     '''
@@ -389,19 +376,13 @@ class TrainPipeline:
                     self.dataset = NpyMemmapDataset(self.data_dir)
                     use_cuda = torch.cuda.is_available()
 
-                    # Use the same collate_fn as above to avoid read-only NumPy warnings
-                    def npy_collate(batch):
-                        states, mcts, winners = zip(*batch)
-                        states = torch.tensor(np.stack(states), dtype=torch.float32)
-                        mcts = torch.tensor(np.stack(mcts), dtype=torch.float32)
-                        winners = torch.tensor(np.array(winners), dtype=torch.float32)
-                        return states, mcts, winners
-
                     self.dataloader = DataLoader(
                         self.dataset,
                         self.batch_size,
                         shuffle=True,
                         pin_memory=use_cuda,
+                        num_workers=self.num_workers,
+                        persistent_workers=self.num_workers > 0,
                         collate_fn=npy_collate,
                     )
 

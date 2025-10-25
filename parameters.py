@@ -17,7 +17,7 @@ DATA_DIR = "data"
 # 模型目录（训练产生与加载的模型文件）
 MODEL_DIR = "models"
 # 训练数据批次大小
-BATCH_SIZE = 1024
+BATCH_SIZE = 2048
 # 训练轮数
 EPOCHS = 10
 # kl散度控制
@@ -25,4 +25,4 @@ KL_TARG = 0.02
 # 保存模型的频率
 CHECK_FREQ = 10
 # 输出到控制台的日志等级 ({"DEBUG": 1, "INFO": 2, "WARNING": 3, "ERROR": 4, "CRITICAL": 5})
-LOG_LEVEL = 3
+LOG_LEVEL = 1
